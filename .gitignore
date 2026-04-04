@@ -1,0 +1,15 @@
+# Root workspace gitignore
+node_modules/
+
+# Environment files (contain secret keys — never commit!)
+.env
+*.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea

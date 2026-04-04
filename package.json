@@ -1,0 +1,11 @@
+{
+  "name": "neuroclass-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev:client": "npm run dev --prefix client",
+    "dev:server": "npm run dev --prefix server",
+    "start:server": "npm run start --prefix server",
+    "install:all": "npm install --prefix client && npm install --prefix server"
+  }
+}
