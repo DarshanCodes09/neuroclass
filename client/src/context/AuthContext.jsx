@@ -16,13 +16,14 @@ export function AuthProvider({ children }) {
   async function fetchUserRole(uid) {
     try {
       const { data } = await supabase
-        .from('users')
+        .from('profiles')
         .select('role')
         .eq('id', uid)
         .single();
         
       if (data) {
-        return data.role;
+        // Map database teacher to ui Instructor
+        return data.role === 'teacher' ? 'Instructor' : (data.role === 'admin' ? 'Admin' : 'Student');
       }
     } catch (error) {
       console.error("Error fetching user role:", error);
@@ -32,14 +33,15 @@ export function AuthProvider({ children }) {
 
   async function upsertUserRole(user, preferredRole) {
     const fallbackRole = preferredRole || 'Student';
+    const dbRole = fallbackRole === 'Instructor' ? 'teacher' : 'student';
+    
     const payload = {
       id: user.id,
-      email: user.email,
-      name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'User',
-      role: fallbackRole,
+      full_name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'User',
+      role: dbRole,
     };
     const { data, error } = await supabase
-      .from('users')
+      .from('profiles')
       .upsert(payload, { onConflict: 'id' })
       .select('role')
       .single();
@@ -47,7 +49,7 @@ export function AuthProvider({ children }) {
       console.error('Error upserting user role:', error);
       return fallbackRole;
     }
-    return data?.role || fallbackRole;
+    return data?.role === 'teacher' ? 'Instructor' : 'Student';
   }
 
   async function resolveUserRole(user, preferredRole = null) {
@@ -67,13 +69,13 @@ export function AuthProvider({ children }) {
     if (error) throw error;
     
     if (user) {
-      // Create user document in Supabase public.users
-      await supabase.from('users').insert([{
+      const dbRole = role === 'Instructor' ? 'teacher' : 'student';
+      // Create user document in Supabase public.profiles
+      await supabase.from('profiles').upsert([{
         id: user.id,
-        email: user.email,
-        name: name || email.split('@')[0],
-        role: role
-      }]);
+        full_name: name || email.split('@')[0],
+        role: dbRole
+      }], { onConflict: 'id' });
     }
     
     return { user };
@@ -181,8 +183,9 @@ export function AuthProvider({ children }) {
   async function switchRole() {
     if (!currentUser) return;
     const newRole = userRole === 'Instructor' ? 'Student' : 'Instructor';
+    const dbRole = newRole === 'Instructor' ? 'teacher' : 'student';
     setUserRole(newRole);
-    await supabase.from('users').update({ role: newRole }).eq('id', currentUser.id);
+    await supabase.from('profiles').update({ role: dbRole }).eq('id', currentUser.id);
   }
 
   const value = {

@@ -11,19 +11,10 @@ const path   = require('path');
 const fs     = require('fs');
 const { getAdmin } = require('../db');
 
-const uploadRoot = path.join(__dirname, '../../uploads');
-if (!fs.existsSync(uploadRoot)) fs.mkdirSync(uploadRoot, { recursive: true });
-
-/** Multer disk storage: temp files in /uploads before Supabase upload */
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadRoot),
-  filename:    (_req, file, cb) => {
-    const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    cb(null, `${unique}${path.extname(file.originalname)}`);
-  },
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 500 * 1024 * 1024 }
 });
-
-const upload = multer({ storage, limits: { fileSize: 500 * 1024 * 1024 } }); // 500MB
 
 /**
  * Upload a local temp file to a Supabase Storage bucket.
@@ -34,9 +25,8 @@ const upload = multer({ storage, limits: { fileSize: 500 * 1024 * 1024 } }); // 
  * @param {string} mimeType
  * @returns {Promise<{ path: string, publicUrl: string }>}
  */
-async function uploadToStorage(bucket, storagePath, localFilePath, mimeType) {
+async function uploadToStorage(bucket, storagePath, fileBuffer, mimeType) {
   const sb = getAdmin();
-  const fileBuffer = fs.readFileSync(localFilePath);
 
   const { error } = await sb.storage
     .from(bucket)
@@ -82,7 +72,6 @@ function cleanupLocal(filePath) {
 
 module.exports = {
   upload,
-  uploadRoot,
   uploadToStorage,
   getSignedUrl,
   deleteFromStorage,

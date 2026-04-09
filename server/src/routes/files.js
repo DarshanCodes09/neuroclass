@@ -1,47 +1,58 @@
 // server/src/routes/files.js
 // Supabase Storage: upload, list, download (signed URL), delete
-const express  = require('express');
-const router   = express.Router();
-const multer   = require('multer');
+const express = require('express');
+const router = express.Router();
+const multer = require('multer');
 const supabase = require('../supabase');
+
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 500 * 1024 * 1024 }, // 500 MB absolute cap
 });
 
+
 // Determine which bucket to use based on fileType
 function resolveBucket(fileType) {
-  if (fileType === 'video')      return 'course-videos';
+  if (fileType === 'video') return 'course-videos';
   if (fileType === 'submission') return 'student-submissions';
   return 'course-materials';
 }
 
-// Systematic path: {courseId}/{fileType}/{timestamp}_{sanitisedFilename}
-function buildStoragePath(courseId, fileType, filename) {
-  const timestamp = Date.now();
-  const safe      = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
-  return `${courseId}/${fileType}/${timestamp}_${safe}`;
-}
 
 // ─── POST /api/files/upload ────────────────────────────────────────────────
 router.post('/upload', upload.single('file'), async (req, res) => {
   try {
-    const { courseId, fileType = 'document', isPublic = 'false' } = req.body;
-    // Auth: read user from Supabase JWT header (or fall back to anon for dev)
+    const {
+      courseId,
+      fileType = 'document',
+      isPublic = 'false',
+      isInstructor = 'false',   // 'true' or 'false' sent from client
+      uploaderName = '',        // display name of uploader
+    } = req.body;
+
+    // Auth: read user from Supabase JWT header
     const authHeader = req.headers.authorization || '';
-    let uploaderId   = null;
+    let uploaderId = null;
     if (authHeader.startsWith('Bearer ')) {
       const token = authHeader.split(' ')[1];
       const { data: { user } } = await supabase.auth.getUser(token);
       if (user) uploaderId = user.id;
     }
 
-    if (!req.file)    return res.status(400).json({ error: 'No file provided.' });
-    if (!courseId)    return res.status(400).json({ error: 'courseId is required.' });
+    if (!req.file) return res.status(400).json({ error: 'No file provided.' });
+    if (!courseId) return res.status(400).json({ error: 'courseId is required.' });
 
-    const bucket      = resolveBucket(fileType);
-    const storagePath = buildStoragePath(courseId, fileType, req.file.originalname);
+    const bucket = resolveBucket(fileType);
+
+    // Systematic path based on role:
+    // Instructor → {courseId}/teacher/{timestamp}_{filename}
+    // Student    → {courseId}/students/{studentId}/{timestamp}_{filename}
+    const folder = isInstructor === 'true'
+      ? 'teacher'
+      : `students/${uploaderId}`;
+    const safeName = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const storagePath = `${courseId}/${folder}/${Date.now()}_${safeName}`;
 
     // 1. Upload to Supabase Storage
     const { error: storageError } = await supabase.storage
@@ -56,15 +67,17 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     const { data: fileRecord, error: dbError } = await supabase
       .from('uploaded_files')
       .insert({
-        course_id:       courseId,
-        uploader_id:     uploaderId,
-        file_name:       req.file.originalname,
-        file_type:       fileType,
-        storage_bucket:  bucket,
-        storage_path:    storagePath,
+        course_id: courseId,
+        uploader_id: uploaderId,
+        uploader_role: isInstructor === 'true' ? 'INSTRUCTOR' : 'STUDENT',
+        uploader_name: uploaderName,
+        file_name: req.file.originalname,
+        file_type: fileType,
+        storage_bucket: bucket,
+        storage_path: storagePath,
         file_size_bytes: req.file.size,
-        is_public:       isPublic === 'true',
-        metadata:        { mimetype: req.file.mimetype },
+        is_public: isPublic === 'true',
+        metadata: { mimetype: req.file.mimetype },
       })
       .select()
       .single();
@@ -77,10 +90,11 @@ router.post('/upload', upload.single('file'), async (req, res) => {
   }
 });
 
-// ─── GET /api/files/course/:courseId ──────────────────────────────────────────────
+
+// ─── GET /api/files/course/:courseId ──────────────────────────────────────
 router.get('/course/:courseId', async (req, res) => {
   const { courseId } = req.params;
-  const { fileType }  = req.query; // optional filter
+  const { fileType } = req.query; // optional filter
 
   let query = supabase
     .from('uploaded_files')
@@ -95,10 +109,11 @@ router.get('/course/:courseId', async (req, res) => {
   res.json(data);
 });
 
-// ─── GET /api/files/download/:fileId ───────────────────────────────────────────────
+
+// ─── GET /api/files/download/:fileId ──────────────────────────────────────
 router.get('/download/:fileId', async (req, res) => {
   const { fileId } = req.params;
-  const expiresIn  = parseInt(req.query.expiresIn || '3600', 10); // default 1 hr
+  const expiresIn = parseInt(req.query.expiresIn || '3600', 10); // default 1 hr
 
   const { data: file, error: fetchErr } = await supabase
     .from('uploaded_files')
@@ -116,7 +131,8 @@ router.get('/download/:fileId', async (req, res) => {
   res.json({ url: data.signedUrl, filename: file.file_name, expiresIn });
 });
 
-// ─── DELETE /api/files/:fileId ──────────────────────────────────────────────────────
+
+// ─── DELETE /api/files/:fileId ─────────────────────────────────────────────
 router.delete('/:fileId', async (req, res) => {
   const { fileId } = req.params;
 
@@ -144,16 +160,18 @@ router.delete('/:fileId', async (req, res) => {
   res.json({ success: true });
 });
 
-// ─── GET /api/files/all ─────────────────────────────────────────────────────────────
+
+// ─── GET /api/files/all ────────────────────────────────────────────────────
 // Service-level: returns all files (for admin / AI training pipeline)
 router.get('/all', async (_req, res) => {
   const { data, error } = await supabase
     .from('uploaded_files')
-    .select('id, file_name, file_type, storage_bucket, storage_path, course_id, created_at')
+    .select('id, file_name, file_type, storage_bucket, storage_path, course_id, uploader_role, uploader_name, created_at')
     .order('created_at', { ascending: false });
 
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
+
 
 module.exports = router;

@@ -20,27 +20,32 @@ async function getProfile(req, res) {
   return res.json({ profile: data });
 }
 
-async function uploadRubricFile(req, res) {
+async function uploadRubrics(req, res) {
   try {
-    if (!req.file) return res.status(400).json({ error: 'file is required.' });
+    if (!req.files || req.files.length === 0) return res.status(400).json({ error: 'files are required.' });
     const { courseId, instructorId } = req.body;
     if (!courseId || !instructorId) return res.status(400).json({ error: 'courseId and instructorId are required.' });
 
     const profile = await getOrCreateProfile(courseId, instructorId);
-    const ext = path.extname(req.file.originalname);
-    const storagePath = `rubric-files/${courseId}/${Date.now()}${ext}`;
+    
+    const uploadedFiles = [];
+    for (const file of req.files) {
+      const ext = path.extname(file.originalname);
+      const storagePath = `rubric-files/${courseId}/${Date.now()}-${Math.random().toString(36).substring(7)}${ext}`;
 
-    const { path: sp, publicUrl } = await uploadToStorage('rubric-files', storagePath, req.file.path, req.file.mimetype);
-    cleanupLocal(req.file.path);
+      const { path: sp, publicUrl } = await uploadToStorage('rubric-files', storagePath, file.buffer, file.mimetype);
 
-    const { data, error } = await sb().from('ai_rubric_files').insert({
-      profile_id: profile.id, course_id: courseId, file_name: req.file.originalname,
-      storage_path: sp, public_url: publicUrl,
-    }).select().single();
-    if (error) return res.status(500).json({ error: error.message });
-    return res.status(201).json({ file: data });
+      const { data, error } = await sb().from('ai_rubric_files').insert({
+        profile_id: profile.id, course_id: courseId, file_name: file.originalname,
+        storage_path: sp, public_url: publicUrl,
+      }).select().single();
+      
+      if (!error && data) uploadedFiles.push(data);
+    }
+    
+    return res.status(201).json({ files: uploadedFiles });
   } catch (err) {
-    console.error('[training] uploadRubricFile error:', err);
+    console.error('[training] uploadRubrics error:', err);
     return res.status(500).json({ error: 'Upload failed.' });
   }
 }
@@ -87,4 +92,31 @@ async function listGoldSamples(req, res) {
   return res.json({ samples: data || [] });
 }
 
-module.exports = { getProfile, uploadRubricFile, addGoldSample, listGoldSamples };
+async function startTraining(req, res) {
+  const { courseId } = req.body;
+  if (!courseId) return res.status(400).json({ error: 'courseId required' });
+  const { data, error } = await sb()
+    .from('ai_training_profiles')
+    .update({ status: 'trained', trained_at: new Date().toISOString() })
+    .eq('course_id', courseId)
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ ok: true, profile: data });
+}
+
+async function deleteRubric(req, res) {
+  const { rubricId } = req.params;
+  const { error } = await sb().from('ai_rubric_files').delete().eq('id', rubricId);
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ ok: true });
+}
+
+async function deleteSample(req, res) {
+  const { sampleId } = req.params;
+  const { error } = await sb().from('ai_gold_samples').delete().eq('id', sampleId);
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ ok: true });
+}
+
+module.exports = { getProfile, uploadRubrics, addGoldSample, listGoldSamples, startTraining, deleteRubric, deleteSample };
