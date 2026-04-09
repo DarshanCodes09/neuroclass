@@ -6,6 +6,8 @@ const courseRoutes = require('./routes/course.routes');
 const trainingRoutes = require('./routes/training.routes');
 const notificationRoutes = require('./routes/notification.routes');
 const lmsRoutes = require('./routes/lms.routes');
+const fileRoutes = require('./routes/files');
+const queryRoutes = require('./routes/queries');
 const { bootstrapDatabase } = require('./bootstrap');
 
 const app = express();
@@ -21,6 +23,8 @@ app.use('/api/courses', courseRoutes);
 app.use('/api/training', trainingRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/lms', lmsRoutes);
+app.use('/api/files', fileRoutes);     // Supabase Storage upload/download/list/delete
+app.use('/api/queries', queryRoutes);  // Student text query logging for AI training
 
 bootstrapDatabase()
   .then(() => {

@@ -1,28 +1,36 @@
+// server/src/utils/upload.js
+// Multer + Supabase Storage upload utilities used by lms.controller.js
+// Bucket map (aligned with schema & files.js route):
+//   course-materials    → course PDFs, docs, slides
+//   course-videos       → video lectures
+//   student-submissions → assignment file uploads
+//   profile-avatars     → user profile pictures (public)
+
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
+const path   = require('path');
+const fs     = require('fs');
 const { getAdmin } = require('../db');
 
 const uploadRoot = path.join(__dirname, '../../uploads');
 if (!fs.existsSync(uploadRoot)) fs.mkdirSync(uploadRoot, { recursive: true });
 
-/** Multer storage: keep files in /uploads for temporary local use */
+/** Multer disk storage: temp files in /uploads before Supabase upload */
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, uploadRoot),
-  filename: (_req, file, cb) => {
+  filename:    (_req, file, cb) => {
     const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
     cb(null, `${unique}${path.extname(file.originalname)}`);
   },
 });
 
-const upload = multer({ storage, limits: { fileSize: 52 * 1024 * 1024 } });
+const upload = multer({ storage, limits: { fileSize: 500 * 1024 * 1024 } }); // 500MB
 
 /**
- * Upload a local file to a Supabase Storage bucket.
+ * Upload a local temp file to a Supabase Storage bucket.
  *
- * @param {string} bucket - e.g. 'course-assets', 'submissions'
- * @param {string} storagePath - path inside bucket, e.g. 'courses/uuid/filename.pdf'
- * @param {string} localFilePath - absolute path on disk
+ * @param {string} bucket       - 'course-materials' | 'course-videos' | 'student-submissions' | 'profile-avatars'
+ * @param {string} storagePath  - path inside bucket, e.g. 'assignments/uuid/1234.pdf'
+ * @param {string} localFilePath - absolute path on disk (from multer)
  * @param {string} mimeType
  * @returns {Promise<{ path: string, publicUrl: string }>}
  */
@@ -36,7 +44,6 @@ async function uploadToStorage(bucket, storagePath, localFilePath, mimeType) {
       contentType: mimeType || 'application/octet-stream',
       upsert: true,
     });
-
   if (error) throw new Error(`Storage upload failed: ${error.message}`);
 
   const { data: urlData } = sb.storage.from(bucket).getPublicUrl(storagePath);
@@ -56,7 +63,7 @@ async function getSignedUrl(bucket, storagePath, expiresInSeconds = 3600) {
 }
 
 /**
- * Delete a file from storage.
+ * Delete a file from Supabase Storage.
  */
 async function deleteFromStorage(bucket, storagePath) {
   const sb = getAdmin();
@@ -65,7 +72,7 @@ async function deleteFromStorage(bucket, storagePath) {
 }
 
 /**
- * Clean up local temp file after upload.
+ * Remove a local temp file after successful upload.
  */
 function cleanupLocal(filePath) {
   try {

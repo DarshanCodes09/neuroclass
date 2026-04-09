@@ -35,10 +35,12 @@ def fetch_all_queries(course_id: str = None, limit: int = 2000):
     """
     Fetch student queries from Supabase for AI training.
     Uses service role key — bypasses RLS to get ALL queries.
+    Columns: id, student_id, course_id, query_text, ai_reply,
+             context, thread_id, provider, query_type, created_at
     """
     q = (
         supabase.table("student_queries")
-        .select("id, student_id, course_id, query_text, ai_reply, thread_id, provider, created_at")
+        .select("id, student_id, course_id, query_text, ai_reply, context, thread_id, provider, query_type, created_at")
         .order("created_at", desc=False)
         .limit(limit)
     )
@@ -54,10 +56,12 @@ def fetch_files_metadata(course_id: str = None, file_type: str = None):
     """
     Fetch metadata for all uploaded files.
     Use storage_bucket + storage_path to download actual files.
+    Columns: id, file_name, file_type, storage_bucket, storage_path,
+             course_id, is_public, metadata, created_at
     """
     q = (
         supabase.table("uploaded_files")
-        .select("id, file_name, file_type, storage_bucket, storage_path, course_id, is_public, created_at")
+        .select("id, file_name, file_type, storage_bucket, storage_path, course_id, is_public, metadata, created_at")
         .order("created_at", desc=False)
     )
     if course_id:
@@ -68,15 +72,13 @@ def fetch_files_metadata(course_id: str = None, file_type: str = None):
 
 files = fetch_files_metadata()
 print(f"📁 Fetched {len(files)} file records")
-for f in files[:5]:
-    print(f"  [{f['file_type']}] {f['file_name']} — {f['storage_path']}")
 
-# ── CELL 5: Download file from Supabase Storage ─────────────
+# ── CELL 5: Download a file from Supabase Storage ───────────
 def download_file(storage_bucket: str, storage_path: str) -> bytes:
-    """Download raw bytes of a file from Supabase Storage."""
+    """Download raw bytes of any file from Supabase Storage."""
     return supabase.storage.from_(storage_bucket).download(storage_path)
 
-# ── CELL 6: LangChain PDF Loader from Supabase ──────────────
+# ── CELL 6: LangChain Document Loader from Supabase Storage ─
 from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 import io
@@ -85,31 +87,27 @@ def load_pdf_from_supabase(file_record: dict) -> list:
     """Download a PDF from Supabase Storage and return LangChain Documents."""
     try:
         from pypdf import PdfReader
-        raw = download_file(file_record["storage_bucket"], file_record["storage_path"])
+        raw    = download_file(file_record["storage_bucket"], file_record["storage_path"])
         reader = PdfReader(io.BytesIO(raw))
-        full_text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        text   = "\n".join(p.extract_text() or "" for p in reader.pages)
         return [Document(
-            page_content=full_text,
+            page_content=text,
             metadata={
                 "source":    file_record["file_name"],
                 "course_id": file_record["course_id"],
                 "file_id":   file_record["id"],
-                "file_type": file_record["file_type"],
             }
         )]
     except Exception as e:
-        print(f"  ⚠️  Could not load {file_record['file_name']}: {e}")
+        print(f"⚠️  Could not load {file_record['file_name']}: {e}")
         return []
 
-# Load all PDFs (limit for demo — remove limit for full training)
-pdf_files = [f for f in files if f.get("file_type") == "pdf"]
-all_docs = []
-for f in pdf_files:
-    docs = load_pdf_from_supabase(f)
-    all_docs.extend(docs)
-    print(f"  ✅ Loaded: {f['file_name']} ({len(docs)} doc)")
-
-print(f"\n📄 Total documents loaded: {len(all_docs)}")
+# Load all PDFs as LangChain documents (limit to 5 for demo)
+pdf_files = [f for f in files if f["file_type"] in ("pdf", "document")]
+all_docs  = []
+for f in pdf_files[:5]:
+    all_docs.extend(load_pdf_from_supabase(f))
+print(f"📄 Loaded {len(all_docs)} document pages")
 
 # ── CELL 7: Build FAISS Vector Store ────────────────────────
 from langchain_community.vectorstores import FAISS
@@ -117,109 +115,88 @@ from langchain_community.embeddings import OpenAIEmbeddings
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
-splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
-chunks = splitter.split_documents(all_docs)
-print(f"🔪 Split into {len(chunks)} chunks")
-
-embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+splitter    = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+chunks      = splitter.split_documents(all_docs)
+embeddings  = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
 vectorstore = FAISS.from_documents(chunks, embeddings)
-retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-print("🔍 FAISS vector store built!")
+retriever   = vectorstore.as_retriever(search_kwargs={"k": 5})
+print(f"🔍 Vector store built with {len(chunks)} chunks")
 
-# Optional: Save vectorstore to disk
-# vectorstore.save_local("/content/neuroclass_vectorstore")
-
-# ── CELL 8: LangGraph Agent — RAG + Auto Query Logging ──────
+# ── CELL 8: LangGraph Agent (RAG + auto query logging) ──────
 from langgraph.graph import StateGraph, END
 from langchain_community.chat_models import ChatOpenAI
 from langchain.chains import RetrievalQA
 from typing import TypedDict, Optional
 import uuid
 
-llm = ChatOpenAI(model="gpt-4o-mini", openai_api_key=OPENAI_API_KEY, temperature=0)
-qa_chain = RetrievalQA.from_chain_type(
-    llm=llm,
-    chain_type="stuff",
-    retriever=retriever,
-    return_source_documents=True,
-)
+llm      = ChatOpenAI(model="gpt-4o-mini", openai_api_key=OPENAI_API_KEY)
+qa_chain = RetrievalQA.from_chain_type(llm=llm, retriever=retriever)
 
 class AgentState(TypedDict):
     query:      str
     student_id: Optional[str]
     course_id:  Optional[str]
-    thread_id:  str
+    session_id: str
     response:   Optional[str]
-    sources:    Optional[list]
     db_id:      Optional[str]
 
 def save_query_node(state: AgentState) -> AgentState:
-    """Node 1 — Save incoming query to Supabase before answering."""
+    """Node 1: Save incoming query to student_queries table."""
     result = supabase.table("student_queries").insert({
         "student_id": state.get("student_id"),
         "course_id":  state.get("course_id"),
         "query_text": state["query"],
-        "thread_id":  state["thread_id"],
-        "provider":   "langchain-rag",
+        "thread_id":  state["session_id"],
+        "provider":   "openai",
+        "query_type": "rag",
     }).execute()
-    state["db_id"] = result.data[0]["id"] if result.data else None
-    print(f"  💾 Query saved to DB (id={state['db_id']})")
+    state["db_id"] = result.data[0]["id"]
     return state
 
 def retrieve_and_answer_node(state: AgentState) -> AgentState:
-    """Node 2 — Run RAG over Supabase-loaded course documents."""
-    result = qa_chain.invoke({"query": state["query"]})
-    state["response"] = result["result"]
-    state["sources"]   = [
-        d.metadata.get("source", "unknown")
-        for d in result.get("source_documents", [])
-    ]
-    print(f"  🤖 Answer generated ({len(state['sources'])} sources)")
+    """Node 2: RAG — retrieve from vector store and generate answer."""
+    response       = qa_chain.invoke(state["query"])
+    state["response"] = response["result"]
     return state
 
 def save_response_node(state: AgentState) -> AgentState:
-    """Node 3 — Write AI reply back to the same DB row."""
+    """Node 3: Write AI reply back to the same DB row."""
     if state.get("db_id"):
         supabase.table("student_queries") \
             .update({"ai_reply": state["response"]}) \
             .eq("id", state["db_id"]) \
             .execute()
-        print(f"  ✅ AI reply saved to DB")
     return state
 
-# Build the graph
+# Build the LangGraph pipeline
 graph = StateGraph(AgentState)
-graph.add_node("save_query",    save_query_node)
-graph.add_node("answer",        retrieve_and_answer_node)
+graph.add_node("save_query",   save_query_node)
+graph.add_node("answer",       retrieve_and_answer_node)
 graph.add_node("save_response", save_response_node)
 
 graph.set_entry_point("save_query")
-graph.add_edge("save_query",    "answer")
+graph.add_edge("save_query",   "answer")
 graph.add_edge("answer",        "save_response")
 graph.add_edge("save_response", END)
 
 agent = graph.compile()
-print("\n🤖 LangGraph RAG agent compiled and ready!")
+print("🤖 LangGraph agent compiled!")
 
-# ── CELL 9: Run the agent ────────────────────────────────────
+# ── CELL 9: Run the Agent ────────────────────────────────────
 result = agent.invoke({
-    "query":      "Summarise the main topics covered in the uploaded course materials.",
-    "student_id": None,           # replace with real student UUID if needed
-    "course_id":  None,           # replace with real course UUID if needed
-    "thread_id":  str(uuid.uuid4()),
+    "query":      "What is the main topic covered in the uploaded course material?",
+    "student_id": None,   # replace with real auth.users UUID
+    "course_id":  None,   # replace with real courses UUID
+    "session_id": str(uuid.uuid4()),
     "response":   None,
-    "sources":    None,
     "db_id":      None,
 })
+print("🎯 Answer:", result["response"])
 
-print("\n🎯 Final Answer:")
-print(result["response"])
-print("\n📎 Sources used:", result["sources"])
-
-# ── CELL 10: Export queries to CSV for offline analysis ─────
+# ── CELL 10: Export queries as CSV for offline training ──────
 import pandas as pd
 
-df_queries = pd.DataFrame(queries)
-df_queries.to_csv("/content/neuroclass_student_queries.csv", index=False)
-print(f"\n📊 Exported {len(df_queries)} queries to /content/neuroclass_student_queries.csv")
-print(df_queries[["query_text", "ai_reply", "created_at"]].head(10))
+df = pd.DataFrame(fetch_all_queries())
+df.to_csv("neuroclass_queries_export.csv", index=False)
+print(f"💾 Exported {len(df)} rows to neuroclass_queries_export.csv")
+print(df[["query_text", "ai_reply", "provider", "created_at"]].head(10))
