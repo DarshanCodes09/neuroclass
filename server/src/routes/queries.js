@@ -1,36 +1,44 @@
 // server/src/routes/queries.js
-// Student text query logging — stores every query + AI response for training
-const express  = require('express');
-const router   = express.Router();
+// Stores every student text query (and AI response) in Supabase.
+// This data is used to train AI agents in LangChain / LangGraph.
+
+const express = require('express');
+const router  = express.Router();
 const supabase = require('../supabase');
 
-// Helper: extract user from Bearer token
-async function getUserFromReq(req) {
-  const auth = req.headers.authorization || '';
-  if (!auth.startsWith('Bearer ')) return null;
-  const { data: { user } } = await supabase.auth.getUser(auth.split(' ')[1]);
+// Resolve studentId from Bearer JWT
+async function resolveUser(req) {
+  const authHeader = req.headers.authorization || '';
+  if (!authHeader.startsWith('Bearer ')) return null;
+  const token = authHeader.split(' ')[1];
+  const { data: { user } } = await supabase.auth.getUser(token);
   return user || null;
 }
 
-// ─── POST /api/queries ────────────────────────────────────────────────────────────
-// Save a new student query (before AI responds)
+// ─── POST /api/queries ────────────────────────────────────────────────────
+// Save incoming student query
 router.post('/', async (req, res) => {
   try {
-    const { queryText, courseId, context, queryType, sessionId, metadata } = req.body;
-    if (!queryText?.trim()) return res.status(400).json({ error: 'queryText is required.' });
+    const user = await resolveUser(req);
+    const {
+      queryText,
+      courseId,
+      context,
+      queryType = 'general',
+      sessionId,
+    } = req.body;
 
-    const user = await getUserFromReq(req);
+    if (!queryText) return res.status(400).json({ error: 'queryText is required.' });
 
     const { data, error } = await supabase
       .from('student_queries')
       .insert({
-        student_id:  user?.id || null,
-        course_id:   courseId  || null,
-        query_text:  queryText.trim(),
-        context:     context   || null,
-        query_type:  queryType || 'general',
-        session_id:  sessionId || null,
-        metadata:    metadata  || {},
+        student_id: user?.id || null,
+        course_id:  courseId || null,
+        query_text: queryText,
+        context:    context  || null,
+        query_type: queryType,
+        session_id: sessionId || null,
       })
       .select()
       .single();
@@ -43,16 +51,18 @@ router.post('/', async (req, res) => {
   }
 });
 
-// ─── PATCH /api/queries/:id/response ──────────────────────────────────────────────────
-// Update a query row with the AI's response
+// ─── PATCH /api/queries/:id/response ─────────────────────────────────────
+// Update a query row with the AI-generated response
 router.patch('/:id/response', async (req, res) => {
   const { responseText } = req.body;
+  const { id } = req.params;
+
   if (!responseText) return res.status(400).json({ error: 'responseText is required.' });
 
   const { data, error } = await supabase
     .from('student_queries')
     .update({ response_text: responseText })
-    .eq('id', req.params.id)
+    .eq('id', id)
     .select()
     .single();
 
@@ -60,32 +70,22 @@ router.patch('/:id/response', async (req, res) => {
   res.json(data);
 });
 
-// ─── GET /api/queries/session/:sessionId ──────────────────────────────────────────────
-router.get('/session/:sessionId', async (req, res) => {
-  const { data, error } = await supabase
+// ─── GET /api/queries/export ──────────────────────────────────────────────
+// Export all queries for AI training (service role, used in Colab)
+router.get('/export', async (req, res) => {
+  const { courseId, limit = 5000 } = req.query;
+
+  let query = supabase
     .from('student_queries')
-    .select('*')
-    .eq('session_id', req.params.sessionId)
-    .order('created_at', { ascending: true });
-
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
-});
-
-// ─── GET /api/queries/all ───────────────────────────────────────────────────────────────
-// Service-level: returns all queries for AI training (use service role key)
-router.get('/all', async (req, res) => {
-  const limit  = parseInt(req.query.limit  || '2000', 10);
-  const offset = parseInt(req.query.offset || '0',    10);
-
-  const { data, error, count } = await supabase
-    .from('student_queries')
-    .select('id, query_text, response_text, context, course_id, query_type, created_at', { count: 'exact' })
+    .select('id, student_id, course_id, query_text, response_text, context, query_type, session_id, created_at')
     .order('created_at', { ascending: true })
-    .range(offset, offset + limit - 1);
+    .limit(Number(limit));
 
+  if (courseId) query = query.eq('course_id', courseId);
+
+  const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
-  res.json({ total: count, offset, limit, data });
+  res.json({ count: data.length, queries: data });
 });
 
 module.exports = router;

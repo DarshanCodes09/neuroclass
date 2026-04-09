@@ -1,37 +1,39 @@
 // server/src/routes/files.js
 // Supabase Storage: upload, list, download (signed URL), delete
+// Storage path convention:
+//   Teacher  → course-materials/{courseId}/teacher/{timestamp}_{filename}
+//   Student  → student-submissions/{courseId}/students/{studentId}/{timestamp}_{filename}
+//   Video    → course-videos/{courseId}/teacher/{timestamp}_{filename}
+
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const supabase = require('../supabase');
 
-
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 500 * 1024 * 1024 }, // 500 MB absolute cap
+  limits: { fileSize: 500 * 1024 * 1024 }, // 500 MB cap
 });
 
-
-// Determine which bucket to use based on fileType
-function resolveBucket(fileType) {
+// Which bucket to use
+function resolveBucket(fileType, isInstructor) {
   if (fileType === 'video') return 'course-videos';
-  if (fileType === 'submission') return 'student-submissions';
-  return 'course-materials';
+  if (isInstructor) return 'course-materials';
+  return 'student-submissions';
 }
-
 
 // ─── POST /api/files/upload ────────────────────────────────────────────────
 router.post('/upload', upload.single('file'), async (req, res) => {
   try {
     const {
       courseId,
-      fileType = 'document',
-      isPublic = 'false',
-      isInstructor = 'false',   // 'true' or 'false' sent from client
-      uploaderName = '',        // display name of uploader
+      fileType     = 'document',
+      isPublic     = 'false',
+      isInstructor = 'false',  // 'true' = teacher, 'false' = student
+      uploaderName = '',
     } = req.body;
 
-    // Auth: read user from Supabase JWT header
+    // Resolve uploader from JWT
     const authHeader = req.headers.authorization || '';
     let uploaderId = null;
     if (authHeader.startsWith('Bearer ')) {
@@ -40,19 +42,21 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       if (user) uploaderId = user.id;
     }
 
-    if (!req.file) return res.status(400).json({ error: 'No file provided.' });
-    if (!courseId) return res.status(400).json({ error: 'courseId is required.' });
+    if (!req.file)   return res.status(400).json({ error: 'No file provided.' });
+    if (!courseId)   return res.status(400).json({ error: 'courseId is required.' });
 
-    const bucket = resolveBucket(fileType);
+    const isTeacher = isInstructor === 'true';
+    const bucket    = resolveBucket(fileType, isTeacher);
 
-    // Systematic path based on role:
-    // Instructor → {courseId}/teacher/{timestamp}_{filename}
-    // Student    → {courseId}/students/{studentId}/{timestamp}_{filename}
-    const folder = isInstructor === 'true'
+    // Build systematic storage path
+    // Teacher:  {courseId}/teacher/{ts}_{name}
+    // Student:  {courseId}/students/{studentId}/{ts}_{name}
+    const safeName = req.file.originalname.replace(/[^a-zA-Z0-9._\-]/g, '_');
+    const ts       = Date.now();
+    const folder   = isTeacher
       ? 'teacher'
-      : `students/${uploaderId}`;
-    const safeName = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const storagePath = `${courseId}/${folder}/${Date.now()}_${safeName}`;
+      : `students/${uploaderId || 'unknown'}`;
+    const storagePath = `${courseId}/${folder}/${ts}_${safeName}`;
 
     // 1. Upload to Supabase Storage
     const { error: storageError } = await supabase.storage
@@ -63,21 +67,21 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       });
     if (storageError) throw storageError;
 
-    // 2. Record in DB
+    // 2. Record metadata in DB
     const { data: fileRecord, error: dbError } = await supabase
       .from('uploaded_files')
       .insert({
-        course_id: courseId,
-        uploader_id: uploaderId,
-        uploader_role: isInstructor === 'true' ? 'INSTRUCTOR' : 'STUDENT',
-        uploader_name: uploaderName,
-        file_name: req.file.originalname,
-        file_type: fileType,
+        course_id:      courseId,
+        uploader_id:    uploaderId,
+        uploader_role:  isTeacher ? 'INSTRUCTOR' : 'STUDENT',
+        uploader_name:  uploaderName,
+        file_name:      req.file.originalname,
+        file_type:      fileType,
         storage_bucket: bucket,
-        storage_path: storagePath,
+        storage_path:   storagePath,
         file_size_bytes: req.file.size,
-        is_public: isPublic === 'true',
-        metadata: { mimetype: req.file.mimetype },
+        is_public:      isPublic === 'true',
+        metadata:       { mimetype: req.file.mimetype },
       })
       .select()
       .single();
@@ -90,11 +94,11 @@ router.post('/upload', upload.single('file'), async (req, res) => {
   }
 });
 
-
 // ─── GET /api/files/course/:courseId ──────────────────────────────────────
+// Returns all files for a course, grouped by uploader_role
 router.get('/course/:courseId', async (req, res) => {
   const { courseId } = req.params;
-  const { fileType } = req.query; // optional filter
+  const { role, fileType } = req.query; // optional ?role=INSTRUCTOR or ?role=STUDENT
 
   let query = supabase
     .from('uploaded_files')
@@ -102,18 +106,24 @@ router.get('/course/:courseId', async (req, res) => {
     .eq('course_id', courseId)
     .order('created_at', { ascending: false });
 
+  if (role)     query = query.eq('uploader_role', role.toUpperCase());
   if (fileType) query = query.eq('file_type', fileType);
 
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
-});
 
+  // Optionally group into teacher / students sections
+  const grouped = {
+    teacher:  data.filter(f => f.uploader_role === 'INSTRUCTOR'),
+    students: data.filter(f => f.uploader_role === 'STUDENT'),
+  };
+  res.json({ raw: data, grouped });
+});
 
 // ─── GET /api/files/download/:fileId ──────────────────────────────────────
 router.get('/download/:fileId', async (req, res) => {
-  const { fileId } = req.params;
-  const expiresIn = parseInt(req.query.expiresIn || '3600', 10); // default 1 hr
+  const { fileId }   = req.params;
+  const expiresIn    = parseInt(req.query.expiresIn || '3600', 10);
 
   const { data: file, error: fetchErr } = await supabase
     .from('uploaded_files')
@@ -131,7 +141,6 @@ router.get('/download/:fileId', async (req, res) => {
   res.json({ url: data.signedUrl, filename: file.file_name, expiresIn });
 });
 
-
 // ─── DELETE /api/files/:fileId ─────────────────────────────────────────────
 router.delete('/:fileId', async (req, res) => {
   const { fileId } = req.params;
@@ -144,13 +153,11 @@ router.delete('/:fileId', async (req, res) => {
 
   if (fetchErr || !file) return res.status(404).json({ error: 'File not found.' });
 
-  // Remove from storage
   const { error: storageErr } = await supabase.storage
     .from(file.storage_bucket)
     .remove([file.storage_path]);
   if (storageErr) return res.status(500).json({ error: storageErr.message });
 
-  // Remove DB record
   const { error: dbErr } = await supabase
     .from('uploaded_files')
     .delete()
@@ -160,9 +167,8 @@ router.delete('/:fileId', async (req, res) => {
   res.json({ success: true });
 });
 
-
-// ─── GET /api/files/all ────────────────────────────────────────────────────
-// Service-level: returns all files (for admin / AI training pipeline)
+// ─── GET /api/files/all ─────────────────────────────────────────────────────
+// For admin / AI training pipeline — service role bypasses RLS
 router.get('/all', async (_req, res) => {
   const { data, error } = await supabase
     .from('uploaded_files')
@@ -172,6 +178,5 @@ router.get('/all', async (_req, res) => {
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
-
 
 module.exports = router;

@@ -1,6 +1,6 @@
 // server/src/supabase.js
-// Supabase admin client (SERVICE ROLE KEY) — server-side only, never expose to client.
-// Used by all routes and controllers for DB + Storage operations.
+// Supabase admin client — SERVICE ROLE KEY, server-side ONLY.
+// NEVER import this file in client-side (browser) code.
 const { createClient } = require('@supabase/supabase-js');
 
 const url = process.env.SUPABASE_URL;
@@ -16,7 +16,7 @@ if (!url || !key) {
 const supabase = createClient(url, key, {
   auth: {
     autoRefreshToken: false,
-    persistSession: false,
+    persistSession:   false,
   },
 });
 
