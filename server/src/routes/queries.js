@@ -1,38 +1,36 @@
 // server/src/routes/queries.js
-// Persists every student text query + AI response into student_queries table.
-// This data is used for AI agent training in LangChain / LangGraph (Google Colab).
-
+// Student text query logging — stores every query + AI response for training
 const express  = require('express');
 const router   = express.Router();
 const supabase = require('../supabase');
 
-async function getUser(req) {
-  const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
-  if (!token) return null;
-  const { data: { user }, error } = await supabase.auth.getUser(token);
-  return error ? null : user;
+// Helper: extract user from Bearer token
+async function getUserFromReq(req) {
+  const auth = req.headers.authorization || '';
+  if (!auth.startsWith('Bearer ')) return null;
+  const { data: { user } } = await supabase.auth.getUser(auth.split(' ')[1]);
+  return user || null;
 }
 
-// ── POST /api/queries ─────────────────────────────────────────────────────────
-// Save a new student query immediately when sent.
-// Body: { queryText, courseId?, context?, queryType?, sessionId?, provider? }
+// ─── POST /api/queries ────────────────────────────────────────────────────────────
+// Save a new student query (before AI responds)
 router.post('/', async (req, res) => {
   try {
-    const user = await getUser(req);
-    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+    const { queryText, courseId, context, queryType, sessionId, metadata } = req.body;
+    if (!queryText?.trim()) return res.status(400).json({ error: 'queryText is required.' });
 
-    const { queryText, courseId, context, queryType, sessionId, provider } = req.body;
-    if (!queryText?.trim()) return res.status(400).json({ error: 'queryText is required' });
+    const user = await getUserFromReq(req);
 
     const { data, error } = await supabase
       .from('student_queries')
       .insert({
-        student_id: user.id,
-        course_id:  courseId  || null,
-        query_text: queryText.trim(),
-        context:    context   || null,
-        thread_id:  sessionId || null,
-        provider:   provider  || 'gemini',
+        student_id:  user?.id || null,
+        course_id:   courseId  || null,
+        query_text:  queryText.trim(),
+        context:     context   || null,
+        query_type:  queryType || 'general',
+        session_id:  sessionId || null,
+        metadata:    metadata  || {},
       })
       .select()
       .single();
@@ -40,94 +38,54 @@ router.post('/', async (req, res) => {
     if (error) throw error;
     res.status(201).json({ success: true, query: data });
   } catch (err) {
-    console.error('[queries/create]', err.message);
+    console.error('[queries/post]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── PATCH /api/queries/:id/response ──────────────────────────────────────────
-// Store AI reply on an existing query row.
-// Body: { responseText, provider? }
+// ─── PATCH /api/queries/:id/response ──────────────────────────────────────────────────
+// Update a query row with the AI's response
 router.patch('/:id/response', async (req, res) => {
-  try {
-    const user = await getUser(req);
-    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  const { responseText } = req.body;
+  if (!responseText) return res.status(400).json({ error: 'responseText is required.' });
 
-    const { responseText, provider } = req.body;
-    if (!responseText?.trim()) return res.status(400).json({ error: 'responseText is required' });
+  const { data, error } = await supabase
+    .from('student_queries')
+    .update({ response_text: responseText })
+    .eq('id', req.params.id)
+    .select()
+    .single();
 
-    const { data, error } = await supabase
-      .from('student_queries')
-      .update({
-        ai_reply: responseText.trim(),
-        ...(provider && { provider }),
-      })
-      .eq('id', req.params.id)
-      .eq('student_id', user.id)
-      .select()
-      .single();
-
-    if (error) throw error;
-    res.json({ success: true, query: data });
-  } catch (err) {
-    console.error('[queries/response]', err.message);
-    res.status(500).json({ error: err.message });
-  }
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
 });
 
-// ── GET /api/queries/my ───────────────────────────────────────────────────────
-// Authenticated student: their own query history.
-// Query params: courseId?, limit? (default 50)
-router.get('/my', async (req, res) => {
-  try {
-    const user = await getUser(req);
-    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+// ─── GET /api/queries/session/:sessionId ──────────────────────────────────────────────
+router.get('/session/:sessionId', async (req, res) => {
+  const { data, error } = await supabase
+    .from('student_queries')
+    .select('*')
+    .eq('session_id', req.params.sessionId)
+    .order('created_at', { ascending: true });
 
-    const { courseId, limit = 50 } = req.query;
-    let q = supabase
-      .from('student_queries')
-      .select('id, query_text, ai_reply, provider, created_at, course_id, thread_id')
-      .eq('student_id', user.id)
-      .order('created_at', { ascending: false })
-      .limit(parseInt(limit, 10));
-    if (courseId) q = q.eq('course_id', courseId);
-
-    const { data, error } = await q;
-    if (error) throw error;
-    res.json(data);
-  } catch (err) {
-    console.error('[queries/my]', err.message);
-    res.status(500).json({ error: err.message });
-  }
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
 });
 
-// ── GET /api/queries/course/:courseId ─────────────────────────────────────────
-// Instructor view: all queries for their course (AI training oversight).
-router.get('/course/:courseId', async (req, res) => {
-  try {
-    const user = await getUser(req);
-    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+// ─── GET /api/queries/all ───────────────────────────────────────────────────────────────
+// Service-level: returns all queries for AI training (use service role key)
+router.get('/all', async (req, res) => {
+  const limit  = parseInt(req.query.limit  || '2000', 10);
+  const offset = parseInt(req.query.offset || '0',    10);
 
-    const { data: course, error: courseErr } = await supabase
-      .from('courses')
-      .select('id')
-      .eq('id', req.params.courseId)
-      .eq('instructor_id', user.id)
-      .single();
-    if (courseErr || !course) return res.status(403).json({ error: 'Forbidden: not your course' });
+  const { data, error, count } = await supabase
+    .from('student_queries')
+    .select('id, query_text, response_text, context, course_id, query_type, created_at', { count: 'exact' })
+    .order('created_at', { ascending: true })
+    .range(offset, offset + limit - 1);
 
-    const { data, error } = await supabase
-      .from('student_queries')
-      .select('*')
-      .eq('course_id', req.params.courseId)
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-    res.json(data);
-  } catch (err) {
-    console.error('[queries/course]', err.message);
-    res.status(500).json({ error: err.message });
-  }
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ total: count, offset, limit, data });
 });
 
 module.exports = router;
