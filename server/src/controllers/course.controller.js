@@ -1,139 +1,68 @@
-const crypto = require('crypto');
 const path = require('path');
-const { insert, update, find } = require('../store');
-const { extractTextFromFile } = require('../utils/parseFile');
-const { splitIntoChunks, toTermFreqVector } = require('../utils/vector');
-const { createNotification } = require('../services/notification.service');
+const { getAdmin } = require('../db');
+const { uploadToStorage, cleanupLocal } = require('../utils/upload');
+const { toTermFreqVector } = require('../utils/vector');
 
-function generateCourseCode() {
-  return Math.random().toString(36).slice(2, 8).toUpperCase();
-}
+function sb() { return getAdmin(); }
 
-async function initializeCourse(req, res) {
-  try {
-    const {
-      courseName,
-      academicLevel = 'Undergraduate',
-      capacity = 0,
-      instructorId,
-      instructorName = 'Instructor',
-    } = req.body;
+async function createCourse(req, res) {
+  const { title, description = '', instructorId, pedagogy = 'SOCRATIC' } = req.body;
+  if (!title || !instructorId) return res.status(400).json({ error: 'title and instructorId are required.' });
 
-    if (!courseName || !instructorId) {
-      return res.status(400).json({ error: 'courseName and instructorId are required.' });
-    }
-
-    const courseId = crypto.randomUUID();
-    const courseCode = generateCourseCode();
-    const files = req.files || [];
-
-    insert('courses', {
-      id: courseId,
-      course_code: courseCode,
-      course_name: courseName,
-      academic_level: academicLevel,
-      capacity: Number(capacity || 0),
-      instructor_id: instructorId,
-      instructor_name: instructorName,
-      students: [],
-      status: 'processing',
-      created_at: new Date().toISOString(),
-    });
-
-    const savedAssets = [];
-    for (const file of files) {
-      const assetId = crypto.randomUUID();
-      const fileType = path.extname(file.originalname).toLowerCase().replace('.', '') || 'unknown';
-      const extractedText = await extractTextFromFile(file.path, file.originalname);
-
-      insert('course_assets', {
-        id: assetId,
-        course_id: courseId,
-        file_name: file.originalname,
-        file_type: fileType,
-        file_path: file.path,
-        extracted_text: extractedText,
-        created_at: new Date().toISOString(),
-      });
-
-      const chunks = splitIntoChunks(extractedText);
-      for (const chunk of chunks) {
-        const contentId = crypto.randomUUID();
-        const vector = toTermFreqVector(chunk);
-        insert('course_contents', {
-          id: contentId,
-          course_id: courseId,
-          source_asset_id: assetId,
-          content_chunk: chunk,
-          vector_json: vector,
-          created_at: new Date().toISOString(),
-        });
-      }
-
-      savedAssets.push({
-        id: assetId,
-        fileName: file.originalname,
-        fileType,
-        filePath: file.path,
-      });
-    }
-
-    update('courses', (c) => c.id === courseId, (c) => ({ ...c, status: 'ready' }));
-    await createNotification(instructorId, `Course "${courseName}" initialized successfully.`);
-
-    return res.status(201).json({
-      course: {
-        id: courseId,
-        courseCode,
-        courseName,
-        academicLevel,
-        capacity: Number(capacity || 0),
-        instructorId,
-        instructorName,
-        status: 'ready',
-      },
-      assets: savedAssets,
-      message: 'Course initialized and content pipeline completed.',
-    });
-  } catch (error) {
-    console.error('initializeCourse error:', error);
-    return res.status(500).json({ error: 'Failed to initialize course.' });
-  }
+  const { data, error } = await sb().from('courses').insert({
+    title, description, instructor_id: instructorId, pedagogy,
+  }).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  return res.status(201).json({ course: data });
 }
 
 async function listCourses(req, res) {
+  const { instructorId, studentId } = req.query;
+  let query = sb().from('courses').select('*');
+
+  if (instructorId) {
+    query = query.eq('instructor_id', instructorId);
+  } else if (studentId) {
+    const { data: enrollments } = await sb().from('enrollments').select('course_id').eq('user_id', studentId);
+    const ids = (enrollments || []).map((e) => e.course_id);
+    if (!ids.length) return res.json({ courses: [] });
+    query = query.in('id', ids);
+  }
+
+  const { data, error } = await query.order('created_at', { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ courses: data || [] });
+}
+
+async function uploadCourseAsset(req, res) {
   try {
-    const { instructorId, studentId } = req.query;
-    let rows = find('courses');
-    if (instructorId) {
-      rows = rows.filter((c) => c.instructor_id === instructorId);
-    } else if (studentId) {
-      rows = rows.filter((c) => Array.isArray(c.students) && c.students.includes(studentId));
-    }
+    if (!req.file) return res.status(400).json({ error: 'file is required.' });
+    const { courseId } = req.body;
+    if (!courseId) return res.status(400).json({ error: 'courseId is required.' });
 
-    const courses = rows
-      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-      .map((c) => ({
-        id: c.id,
-        courseCode: c.course_code,
-        courseName: c.course_name,
-        academicLevel: c.academic_level,
-        capacity: c.capacity,
-        instructorId: c.instructor_id,
-        instructorName: c.instructor_name,
-        students: c.students || [],
-        status: c.status,
-        createdAt: c.created_at,
-      }));
+    const ext = path.extname(req.file.originalname);
+    const storagePath = `courses/${courseId}/${Date.now()}${ext}`;
 
-    return res.json({ courses });
-  } catch (error) {
-    console.error('listCourses error:', error);
-    return res.status(500).json({ error: 'Failed to list courses.' });
+    const { path: sp, publicUrl } = await uploadToStorage(
+      'course-assets', storagePath, req.file.path, req.file.mimetype
+    );
+    cleanupLocal(req.file.path);
+
+    // Insert metadata record
+    const { data, error } = await sb().from('course_assets').insert({
+      course_id: courseId,
+      file_name: req.file.originalname,
+      file_type: req.file.mimetype,
+      storage_path: sp,
+      public_url: publicUrl,
+    }).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+
+    return res.status(201).json({ asset: data });
+  } catch (err) {
+    console.error('[course] uploadCourseAsset error:', err);
+    return res.status(500).json({ error: 'Upload failed.' });
   }
 }
 
-module.exports = {
-  initializeCourse,
-  listCourses,
-};
+module.exports = { createCourse, listCourses, uploadCourseAsset };

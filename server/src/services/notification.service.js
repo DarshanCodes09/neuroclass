@@ -1,18 +1,12 @@
-const crypto = require('crypto');
-const { insert } = require('../store');
+const { getAdmin } = require('../db');
 
-async function createNotification(userId, message) {
-  const id = crypto.randomUUID();
-  insert('notifications', {
-    id,
-    user_id: userId,
-    message,
-    read_status: 0,
-    created_at: new Date().toISOString(),
-  });
-  return { id, userId, message };
+async function createNotification(userId, message, type = 'info') {
+  try {
+    const sb = getAdmin();
+    await sb.from('notifications').insert({ user_id: userId, title: message, body: message, type });
+  } catch (err) {
+    console.warn('[notification] Failed to create notification:', err.message);
+  }
 }
 
-module.exports = {
-  createNotification,
-};
+module.exports = { createNotification };

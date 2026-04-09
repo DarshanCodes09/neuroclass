@@ -1,38 +1,23 @@
-const { find, update } = require('../store');
+const { getAdmin } = require('../db');
+
+function sb() { return getAdmin(); }
 
 async function listNotifications(req, res) {
-  try {
-    const { userId } = req.params;
-    const rows = find('notifications', (n) => n.user_id === userId)
-      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-      .slice(0, 50)
-      .map((n) => ({
-        id: n.id,
-        userId: n.user_id,
-        message: n.message,
-        readStatus: n.read_status,
-        createdAt: n.created_at,
-      }));
-    const unreadCount = rows.filter((row) => Number(row.readStatus) === 0).length;
-    return res.json({ notifications: rows, unreadCount });
-  } catch (error) {
-    console.error('listNotifications error:', error);
-    return res.status(500).json({ error: 'Failed to fetch notifications.' });
-  }
+  const { userId } = req.query;
+  if (!userId) return res.status(400).json({ error: 'userId required.' });
+  const { data, error } = await sb().from('notifications')
+    .select('*').eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(50);
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ notifications: data || [] });
 }
 
 async function markRead(req, res) {
-  try {
-    const { notificationId } = req.params;
-    update('notifications', (n) => n.id === notificationId, (n) => ({ ...n, read_status: 1 }));
-    return res.json({ ok: true });
-  } catch (error) {
-    console.error('markRead error:', error);
-    return res.status(500).json({ error: 'Failed to mark notification as read.' });
-  }
+  const { notificationId } = req.params;
+  const { error } = await sb().from('notifications').update({ read: true }).eq('id', notificationId);
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ ok: true });
 }
 
-module.exports = {
-  listNotifications,
-  markRead,
-};
+module.exports = { listNotifications, markRead };
