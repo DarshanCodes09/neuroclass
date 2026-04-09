@@ -1,51 +1,18 @@
-import React, { useState, useEffect } from 'react';
-import { db } from '../config/firebase';
-import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
-import { Trophy, Medal, Award, TrendingUp } from 'lucide-react';
+import React from 'react';
+import { Trophy, Medal, TrendingUp } from 'lucide-react';
 
 // For the mock, we can seed or simulate users if they don't exist, 
 // but let's assume we fetch from 'students' or just render a mock array for demonstration 
 // if the DB is empty, while hooking into Firestore.
 
 export default function Leaderboard() {
-  const [leaders, setLeaders] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    // In a real app, query a 'leaderboard' or 'users' collection with role='student'
-    const q = query(collection(db, 'leaderboard'), orderBy('xp', 'desc'), limit(10));
-    
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      let data = [];
-      snapshot.forEach(doc => {
-        data.push({ id: doc.id, ...doc.data() });
-      });
-
-      // Provide mock data if the collection is empty for the sake of the MVP demo
-      if (data.length === 0) {
-        data = [
-          { id: '1', name: 'Elias Thorne', xp: 14500, avatar: null, change: '+12%' },
-          { id: '2', name: 'Sophia Lin', xp: 13200, avatar: null, change: '+5%' },
-          { id: '3', name: 'Marcus Chen', xp: 12850, avatar: null, change: '-2%' },
-          { id: '4', name: 'Aaliyah Jones', xp: 11900, avatar: null, change: '+8%' },
-          { id: '5', name: 'Oliver Smith', xp: 10500, avatar: null, change: '+1%' }
-        ];
-      }
-      
-      setLeaders(data);
-      setLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, []);
-
-  if (loading) {
-    return (
-      <div className="flex-1 flex justify-center items-center h-full">
-        <div className="w-8 h-8 rounded-full border-4 border-primary border-t-transparent animate-spin"></div>
-      </div>
-    );
-  }
+  const leaders = [
+    { id: '1', name: 'Elias Thorne', xp: 14500, avatar: null, change: '+12%' },
+    { id: '2', name: 'Sophia Lin', xp: 13200, avatar: null, change: '+5%' },
+    { id: '3', name: 'Marcus Chen', xp: 12850, avatar: null, change: '-2%' },
+    { id: '4', name: 'Aaliyah Jones', xp: 11900, avatar: null, change: '+8%' },
+    { id: '5', name: 'Oliver Smith', xp: 10500, avatar: null, change: '+1%' }
+  ];
 
   return (
     <div className="px-12 py-10 max-w-screen-xl mx-auto w-full">

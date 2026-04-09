@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { db } from '../config/firebase';
-import { doc, onSnapshot, collection, query, orderBy, addDoc, serverTimestamp, where } from 'firebase/firestore';
 import { MessageSquare, MoreVertical, Send, Loader2, Calendar } from 'lucide-react';
 import StudentAssignments from './StudentAssignments';
 import InstructorAssignments from './InstructorAssignments';
 import AITutor from './AITutor';
+import { aiService } from '../services/aiService';
+
+function getCommentsStorageKey(courseId) {
+  return `neuroclass:course-comments:${courseId}`;
+}
 
 export default function CourseHub() {
   const { courseId } = useParams();
@@ -19,45 +22,87 @@ export default function CourseHub() {
   const [upcomingAssignments, setUpcomingAssignments] = useState([]);
   const [newAnnouncement, setNewAnnouncement] = useState('');
   const [loadingMsg, setLoadingMsg] = useState(false);
+  
+  // Comments state
+  const [comments, setComments] = useState({}); // { postId: [...] }
+  const [commentDrafts, setCommentDrafts] = useState({}); // { postId: text }
+  const [expandedComments, setExpandedComments] = useState({}); // { postId: boolean }
 
   // Fetch Course details
   useEffect(() => {
     if (!courseId) return;
-    const unsubscribe = onSnapshot(doc(db, 'courses', courseId), (docSnap) => {
-      if (docSnap.exists()) {
-        setCourse({ id: docSnap.id, ...docSnap.data() });
-      } else {
-        navigate('/dashboard');
-      }
-    });
-    return () => unsubscribe();
-  }, [courseId, navigate]);
+    let cancelled = false;
+    aiService.fetchCourseById(courseId)
+      .then((data) => { if (!cancelled) setCourse(data.course); })
+      .catch(() => navigate(`/${userRole?.toLowerCase() || 'instructor'}/dashboard`));
+    return () => { cancelled = true; };
+  }, [courseId, navigate, userRole]);
 
   // Fetch Announcements
   useEffect(() => {
     if (!courseId) return;
-    const q = query(collection(db, `courses/${courseId}/announcements`), orderBy('createdAt', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const posts = [];
-      snapshot.forEach(doc => posts.push({ id: doc.id, ...doc.data() }));
-      setAnnouncements(posts);
-    });
-    return () => unsubscribe();
+    let cancelled = false;
+    const load = async () => {
+      const data = await aiService.fetchAnnouncements(courseId);
+      if (!cancelled) setAnnouncements(data.announcements || []);
+    };
+    load();
+    const interval = setInterval(load, 8000);
+    return () => { cancelled = true; clearInterval(interval); };
   }, [courseId]);
 
   // Fetch Upcoming Assignments
   useEffect(() => {
     if (!courseId) return;
-    const q = query(collection(db, 'assignments'), where('courseId', '==', courseId));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const assns = [];
-      snapshot.forEach(d => assns.push({ id: d.id, ...d.data() }));
-      // Sort upcoming
-      assns.sort((a,b) => new Date(a.dueDate) - new Date(b.dueDate));
-      setUpcomingAssignments(assns);
-    });
-    return () => unsubscribe();
+    let cancelled = false;
+    const load = async () => {
+      const data = await aiService.fetchAssignments({ courseId });
+      const assns = (data.assignments || []).sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+      if (!cancelled) setUpcomingAssignments(assns);
+    };
+    load();
+    const interval = setInterval(load, 8000);
+    return () => { cancelled = true; clearInterval(interval); };
   }, [courseId]);
+
+  // Load locally persisted comments
+  useEffect(() => {
+    if (!courseId) return;
+    try {
+      const raw = localStorage.getItem(getCommentsStorageKey(courseId));
+      setComments(raw ? JSON.parse(raw) : {});
+    } catch (error) {
+      console.error('Failed to load course comments:', error);
+      setComments({});
+    }
+  }, [courseId]);
+
+  useEffect(() => {
+    if (!courseId) return;
+    localStorage.setItem(getCommentsStorageKey(courseId), JSON.stringify(comments));
+  }, [comments, courseId]);
+
+  const handlePostComment = async (postId) => {
+    const text = commentDrafts[postId]?.trim();
+    if (!text || !currentUser) return;
+
+    const nextComment = {
+      id: crypto.randomUUID(),
+      courseId,
+      postId,
+      text,
+      authorId: currentUser.uid,
+      authorName: currentUser.displayName || currentUser.email.split('@')[0],
+      authorPhoto: currentUser.photoURL || null,
+      createdAt: new Date().toISOString(),
+    };
+
+    setComments((prev) => ({
+      ...prev,
+      [postId]: [...(prev[postId] || []), nextComment],
+    }));
+    setCommentDrafts(prev => ({ ...prev, [postId]: '' }));
+  };
 
   const handlePostAnnouncement = async (e) => {
     e.preventDefault();
@@ -65,12 +110,11 @@ export default function CourseHub() {
     
     try {
       setLoadingMsg(true);
-      await addDoc(collection(db, `courses/${courseId}/announcements`), {
+      await aiService.postAnnouncement(courseId, {
         text: newAnnouncement,
         authorId: currentUser.uid,
         authorName: currentUser.displayName || currentUser.email.split('@')[0],
-        authorPhoto: currentUser.photoURL || null,
-        createdAt: serverTimestamp()
+        authorPhoto: currentUser.photoURL || null
       });
       setNewAnnouncement('');
     } catch (err) {
@@ -161,7 +205,7 @@ export default function CourseHub() {
                   <div>
                     <h4 className="font-bold text-sm leading-tight text-on-surface">{post.authorName}</h4>
                     <span className="text-[10px] text-on-surface-variant font-medium">
-                      {post.createdAt ? new Date(post.createdAt.toDate()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit'}) : 'Just now'}
+                      {post.createdAt ? new Date(post.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit'}) : 'Just now'}
                     </span>
                   </div>
               </div>
@@ -169,9 +213,69 @@ export default function CourseHub() {
             </div>
             <p className="text-sm text-on-surface leading-relaxed whitespace-pre-wrap">{post.text}</p>
             
-            <div className="mt-4 pt-4 border-t border-outline-variant/10 text-xs text-on-surface-variant font-semibold flex items-center gap-2 hover:bg-surface-container-low w-max px-3 py-2 rounded-full cursor-pointer transition-colors">
-              <MessageSquare className="w-4 h-4" /> Add class comment
+            <div 
+              onClick={() => setExpandedComments(prev => ({...prev, [post.id]: !prev[post.id]}))}
+              className="mt-4 pt-4 border-t border-outline-variant/10 text-xs text-on-surface-variant font-semibold flex items-center gap-2 hover:bg-surface-container-low w-max px-3 py-2 rounded-full cursor-pointer transition-colors">
+              <MessageSquare className="w-4 h-4" /> {comments[post.id]?.length || 0} class comments
             </div>
+            
+            {expandedComments[post.id] && (
+              <div className="mt-4 space-y-4">
+                {/* Existing Comments */}
+                <div className="space-y-4">
+                  {(comments[post.id] || []).map(comment => (
+                    <div key={comment.id} className="flex gap-3">
+                      {comment.authorPhoto ? (
+                        <img src={comment.authorPhoto} alt="Avatar" className="w-8 h-8 rounded-full shrink-0" />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center font-bold shrink-0 text-[10px]">
+                          {comment.authorName?.charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-xs text-on-surface">{comment.authorName}</span>
+                          <span className="text-[10px] text-on-surface-variant font-medium">
+                            {comment.createdAt ? new Date(comment.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'Just now'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-on-surface mt-0.5">{comment.text}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                
+                {/* Add Comment Input */}
+                <div className="flex gap-3 items-center pt-2">
+                  {currentUser.photoURL ? (
+                    <img src={currentUser.photoURL} alt="Avatar" className="w-8 h-8 rounded-full shrink-0" />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold shrink-0 text-[10px]">
+                      {currentUser.displayName?.charAt(0) || currentUser.email.charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                  <input 
+                    type="text"
+                    value={commentDrafts[post.id] || ''}
+                    onChange={(e) => setCommentDrafts(prev => ({...prev, [post.id]: e.target.value}))}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handlePostComment(post.id);
+                      }
+                    }}
+                    placeholder="Add class comment..."
+                    className="flex-1 bg-surface-container-low text-xs border border-outline-variant/30 focus:border-primary focus:ring-1 focus:ring-primary rounded-full py-2 px-4 outline-none"
+                  />
+                  <button 
+                    onClick={() => handlePostComment(post.id)}
+                    disabled={!commentDrafts[post.id]?.trim()}
+                    className="p-2 text-primary hover:bg-surface-container-low rounded-full disabled:opacity-50 transition-colors">
+                    <Send className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         ))}
       </div>

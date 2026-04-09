@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { db } from '../config/firebase';
-import { collection, query, where, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { ClipboardCheck, Sparkles, CheckCircle, AlertCircle, Eye, Hand } from 'lucide-react';
+import { aiService } from '../services/aiService';
 
 export default function GradeReview() {
   const { currentUser } = useAuth();
@@ -16,29 +15,21 @@ export default function GradeReview() {
   // Fetch evaluated submissions for courses this instructor teaches
   useEffect(() => {
     if (!currentUser) return;
-    // We only care about ones waiting for approval "evaluated"
-    const q = query(
-      collection(db, 'submissions'), 
-      where('instructorId', '==', currentUser.uid),
-      where('status', '==', 'evaluated')
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const subData = [];
-      snapshot.forEach(d => subData.push({ id: d.id, ...d.data() }));
-      // Optional client side sort
-      subData.sort((a,b) => (b.submittedAt?.toMillis() || 0) - (a.submittedAt?.toMillis() || 0));
-      setSubmissions(subData);
-    });
-    return () => unsubscribe();
+    let cancelled = false;
+    const load = async () => {
+      const data = await aiService.fetchSubmissions({ instructorId: currentUser.uid, status: 'evaluated' });
+      if (!cancelled) setSubmissions(data.submissions || []);
+    };
+    load();
+    const interval = setInterval(load, 8000);
+    return () => { cancelled = true; clearInterval(interval); };
   }, [currentUser]);
 
   const handleApprove = async () => {
     if (!selectedSub) return;
     setProcessing(true);
     try {
-      const subRef = doc(db, 'submissions', selectedSub.id);
-      await updateDoc(subRef, {
+      await aiService.reviewSubmission(selectedSub.id, {
         status: 'approved',
         finalScore: selectedSub.aiScore // Accept AI Recommendation
       });
@@ -55,8 +46,7 @@ export default function GradeReview() {
     if (!selectedSub || !overrideScore) return;
     setProcessing(true);
     try {
-      const subRef = doc(db, 'submissions', selectedSub.id);
-      await updateDoc(subRef, {
+      await aiService.reviewSubmission(selectedSub.id, {
         status: 'overridden',
         finalScore: Number(overrideScore),
         instructorFeedback: overrideFeedback
@@ -89,6 +79,7 @@ export default function GradeReview() {
 
         {submissions.map(sub => {
           const isSelected = selectedSub?.id === sub.id;
+          const hasFile = Boolean(sub.fileUrl);
           return (
             <div 
               key={sub.id}
@@ -107,6 +98,7 @@ export default function GradeReview() {
               </div>
               <h4 className="font-medium text-xs text-on-surface-variant line-clamp-1 break-all flex items-center gap-2">
                  <Eye className="w-3 h-3 shrink-0"/> {sub.fileName}
+                 {!hasFile && <span className="text-error ml-1">(file missing)</span>}
               </h4>
             </div>
           );
@@ -128,7 +120,15 @@ export default function GradeReview() {
             <div className="p-10 flex justify-between items-start">
                <div>
                   <h2 className="text-3xl font-black font-headline mb-2">{selectedSub.studentName}</h2>
-                  <a href={selectedSub.fileUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline text-sm font-bold flex items-center gap-2 w-max">
+                  <a
+                    href={selectedSub.fileUrl ? aiService.resolveFileUrl(selectedSub.fileUrl) : '#'}
+                    target={selectedSub.fileUrl ? "_blank" : undefined}
+                    rel={selectedSub.fileUrl ? "noreferrer" : undefined}
+                    className={`text-sm font-bold flex items-center gap-2 w-max ${selectedSub.fileUrl ? 'text-primary hover:underline' : 'text-on-surface-variant cursor-not-allowed'}`}
+                    onClick={(e) => {
+                      if (!selectedSub.fileUrl) e.preventDefault();
+                    }}
+                  >
                     <Eye className="w-4 h-4" /> Expand Original Document
                   </a>
                </div>

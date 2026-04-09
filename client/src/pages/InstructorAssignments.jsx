@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { db } from '../config/firebase';
-import { collection, addDoc, query, where, onSnapshot, serverTimestamp, getDocs } from 'firebase/firestore';
-import { FileText, Plus, Calendar, AlertCircle } from 'lucide-react';
+import { FileText, Plus, Calendar, AlertCircle, Paperclip } from 'lucide-react';
+import { aiService } from '../services/aiService';
 
 export default function InstructorAssignments({ courseIdFilter }) {
   const { currentUser } = useAuth();
@@ -19,40 +18,39 @@ export default function InstructorAssignments({ courseIdFilter }) {
     maxScore: 100
   });
 
+  const [attachment, setAttachment] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   // Fetch instructed courses
   useEffect(() => {
     if (!currentUser) return;
-    const q = query(collection(db, 'courses'), where('instructorId', '==', currentUser.uid));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const courseData = [];
-      snapshot.forEach(doc => courseData.push({ id: doc.id, ...doc.data() }));
-      setCourses(courseData);
-      if (courseData.length > 0 && !formData.courseId) {
-        setFormData(prev => ({ ...prev, courseId: courseIdFilter || courseData[0].id }));
+    let cancelled = false;
+    const load = async () => {
+      const data = await aiService.fetchCourses({ instructorId: currentUser.uid });
+      if (cancelled) return;
+      setCourses(data.courses || []);
+      if ((data.courses || []).length > 0 && !formData.courseId) {
+        setFormData((prev) => ({ ...prev, courseId: courseIdFilter || data.courses[0].id }));
       }
-    });
-    return () => unsubscribe();
-  }, [currentUser]);
+    };
+    load();
+    const interval = setInterval(load, 10000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [currentUser, courseIdFilter, formData.courseId]);
 
   // Fetch assignments created by this instructor
   useEffect(() => {
     if (!currentUser) return;
-    const q = courseIdFilter 
-       ? query(collection(db, 'assignments'), where('instructorId', '==', currentUser.uid), where('courseId', '==', courseIdFilter))
-       : query(collection(db, 'assignments'), where('instructorId', '==', currentUser.uid));
-       
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const assnData = [];
-      snapshot.forEach(doc => assnData.push({ id: doc.id, ...doc.data() }));
-      // Sort in memory (simplest without composite index)
-      assnData.sort((a,b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
-      setAssignments(assnData);
-    });
-    return () => unsubscribe();
-  }, [currentUser]);
+    let cancelled = false;
+    const load = async () => {
+      const data = await aiService.fetchAssignments({ instructorId: currentUser.uid, courseId: courseIdFilter });
+      if (!cancelled) setAssignments(data.assignments || []);
+    };
+    load();
+    const interval = setInterval(load, 10000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [currentUser, courseIdFilter]);
 
   const handleCreateAssignment = async (e) => {
     e.preventDefault();
@@ -67,20 +65,26 @@ export default function InstructorAssignments({ courseIdFilter }) {
     try {
       // Find course code to save alongside
       const course = courses.find(c => c.id === formData.courseId);
-      
-      await addDoc(collection(db, 'assignments'), {
+      let attachmentMeta = { fileName: null, fileUrl: null };
+      if (attachment) {
+        attachmentMeta = await aiService.uploadAssignmentAttachment(attachment);
+      }
+
+      await aiService.createAssignment({
         instructorId: currentUser.uid,
         courseId: formData.courseId,
         courseName: course?.courseName || 'Unknown Course',
         courseCode: course?.courseCode || '----',
         title: formData.title,
         description: formData.description,
+        attachmentName: attachmentMeta.fileName,
+        attachmentUrl: attachmentMeta.fileUrl,
         dueDate: formData.dueDate,
-        maxScore: Number(formData.maxScore),
-        createdAt: serverTimestamp()
+        maxScore: Number(formData.maxScore)
       });
       
       setShowCreate(false);
+      setAttachment(null);
       setFormData({ ...formData, title: '', description: '', dueDate: '', maxScore: 100 });
     } catch (err) {
       setError("Failed to create assignment: " + err.message);
@@ -178,6 +182,23 @@ export default function InstructorAssignments({ courseIdFilter }) {
                 placeholder="Detail the requirements, constraints, and expected deliverables..."
               ></textarea>
             </div>
+            <div className="space-y-2">
+              <label className="text-xs font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-2">
+                <Paperclip className="w-4 h-4" /> Optional Attachment
+              </label>
+              <div className="flex items-center gap-4">
+                <input 
+                  type="file" 
+                  id="assignment-file"
+                  onChange={(e) => setAttachment(e.target.files[0])}
+                  className="hidden"
+                />
+                <label htmlFor="assignment-file" className="cursor-pointer px-4 py-2 bg-surface-container border border-outline-variant/30 rounded-lg text-sm hover:bg-surface-container-high transition-colors text-on-surface">
+                  {attachment ? 'Change File' : 'Choose File'}
+                </label>
+                {attachment && <span className="text-sm font-medium text-primary line-clamp-1">{attachment.name}</span>}
+              </div>
+            </div>
             <div className="flex justify-end pt-4">
               <button disabled={loading} type="submit" className="px-8 py-3 bg-indigo-600 text-white rounded-full font-bold active:scale-95 transition-transform disabled:opacity-50">
                 {loading ? 'Creating...' : 'Deploy Assignment'}
@@ -195,7 +216,11 @@ export default function InstructorAssignments({ courseIdFilter }) {
             <p className="text-sm">Click "New Assignment" to generate tasks for your students.</p>
           </div>
         )}
-        {assignments.map(assn => (
+        {assignments.map(assn => {
+          const attachmentLabel = assn.attachmentName || null;
+          const attachmentUrl = aiService.resolveFileUrl(assn.attachmentUrl || '');
+
+          return (
           <div key={assn.id} className="bg-surface-container-lowest border border-outline-variant/20 rounded-xl p-6 hover:shadow-xl hover:shadow-primary/5 transition-all group">
             <div className="flex justify-between items-start mb-4">
               <span className="bg-secondary-fixed text-on-secondary-fixed-variant px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest">
@@ -207,14 +232,28 @@ export default function InstructorAssignments({ courseIdFilter }) {
               </div>
             </div>
             <h4 className="font-bold font-headline text-lg mb-2">{assn.title}</h4>
-            <p className="text-sm text-on-surface-variant line-clamp-2 leading-relaxed mb-6">{assn.description}</p>
+            <p className="text-sm text-on-surface-variant line-clamp-2 leading-relaxed mb-4">
+              {assn.description}
+            </p>
+            {attachmentLabel && (
+              <a
+                href={attachmentUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 text-xs font-bold text-primary bg-primary/10 px-3 py-1.5 rounded-lg mb-6 hover:bg-primary/20 transition-colors"
+              >
+                <Paperclip className="w-3 h-3" />
+                {attachmentLabel}
+              </a>
+            )}
+            {!attachmentLabel && <div className="mb-6"></div>}
             
             <div className="pt-4 border-t border-outline-variant/10 flex justify-between items-center text-sm font-semibold">
               <span className="text-outline">Max Score: {assn.maxScore}</span>
               <button className="text-primary hover:text-indigo-600 transition-colors">Edit</button>
             </div>
           </div>
-        ))}
+        )})}
       </div>
     </div>
   );

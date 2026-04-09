@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../config/supabase';
 
@@ -14,7 +15,7 @@ export function AuthProvider({ children }) {
 
   async function fetchUserRole(uid) {
     try {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('users')
         .select('role')
         .eq('id', uid)
@@ -27,6 +28,34 @@ export function AuthProvider({ children }) {
       console.error("Error fetching user role:", error);
     }
     return 'Student'; // default role
+  }
+
+  async function upsertUserRole(user, preferredRole) {
+    const fallbackRole = preferredRole || 'Student';
+    const payload = {
+      id: user.id,
+      email: user.email,
+      name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'User',
+      role: fallbackRole,
+    };
+    const { data, error } = await supabase
+      .from('users')
+      .upsert(payload, { onConflict: 'id' })
+      .select('role')
+      .single();
+    if (error) {
+      console.error('Error upserting user role:', error);
+      return fallbackRole;
+    }
+    return data?.role || fallbackRole;
+  }
+
+  async function resolveUserRole(user, preferredRole = null) {
+    if (!user) return null;
+    if (preferredRole) {
+      return upsertUserRole(user, preferredRole);
+    }
+    return fetchUserRole(user.id);
   }
 
   async function signup(email, password, role = 'Student', name = '') {
@@ -50,16 +79,26 @@ export function AuthProvider({ children }) {
     return { user };
   }
 
-  async function login(email, password) {
+  async function login(email, password, preferredRole = null) {
+    if (preferredRole) {
+      localStorage.setItem('neuroclass-preferred-role', preferredRole);
+    }
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
-    if (error) throw error;
+    if (error) {
+      localStorage.removeItem('neuroclass-preferred-role');
+      throw error;
+    }
+    if (data?.user && preferredRole) {
+      await upsertUserRole(data.user, preferredRole);
+    }
     return data;
   }
 
-  async function loginWithGoogle(role = 'Student') {
+  async function loginWithGoogle(preferredRole = 'Student') {
+    localStorage.setItem('neuroclass-preferred-role', preferredRole);
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
     });
@@ -73,39 +112,55 @@ export function AuthProvider({ children }) {
   }
 
   useEffect(() => {
+    let isMounted = true;
+
+    // Fail-safe: never allow auth bootstrap to keep the app blank forever.
+    const fallbackTimer = setTimeout(() => {
+      if (isMounted) setLoading(false);
+    }, 4000);
+
     // Initial session loading
     supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!isMounted) return;
       const user = session?.user || null;
       if (user) {
         // Map user properties dynamically to match original Firebase implementation partially
         user.displayName = user.user_metadata?.full_name || user.email?.split('@')[0];
         user.photoURL = user.user_metadata?.avatar_url;
         user.uid = user.id;
-        
-        fetchUserRole(user.id).then(role => {
+
+        const preferredRole = localStorage.getItem('neuroclass-preferred-role');
+        if (preferredRole) localStorage.removeItem('neuroclass-preferred-role');
+        resolveUserRole(user, preferredRole).then(role => {
+          if (!isMounted) return;
           setUserRole(role);
           setCurrentUser(user);
           setLoading(false);
+          clearTimeout(fallbackTimer);
         });
       } else {
         setUserRole(null);
         setCurrentUser(null);
         setLoading(false);
+        clearTimeout(fallbackTimer);
       }
     }).catch((err) => {
       console.error("Supabase GenSession Error:", err);
-      setLoading(false);
+      if (isMounted) setLoading(false);
+      clearTimeout(fallbackTimer);
     });
 
     // Listen for auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       const user = session?.user || null;
       if (user) {
         user.displayName = user.user_metadata?.full_name || user.email?.split('@')[0];
         user.photoURL = user.user_metadata?.avatar_url;
         user.uid = user.id;
 
-        const role = await fetchUserRole(user.id);
+        const preferredRole = localStorage.getItem('neuroclass-preferred-role');
+        if (preferredRole) localStorage.removeItem('neuroclass-preferred-role');
+        const role = await resolveUserRole(user, preferredRole);
         setUserRole(role);
       } else {
         setUserRole(null);
@@ -115,8 +170,12 @@ export function AuthProvider({ children }) {
     });
 
     return () => {
+      isMounted = false;
+      clearTimeout(fallbackTimer);
       subscription?.unsubscribe();
     };
+  // Role sync relies on auth events and intentionally runs once on mount.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function switchRole() {

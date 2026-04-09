@@ -15,7 +15,7 @@ export default function StudentDashboard() {
     if (!currentUser) return;
 
     const fetchCourses = async () => {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('courses')
         .select('*')
         .contains('students', [currentUser.uid]);

@@ -1,12 +1,49 @@
-import React from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Search, Bell, Settings, User, Menu } from 'lucide-react';
+import { Search, Bell, Menu } from 'lucide-react';
+import { aiService } from '../services/aiService';
 
 export default function TopNavBar({ onToggleSidebar }) {
   const location = useLocation();
   const { currentUser, userRole, switchRole } = useAuth();
-  const basePath = userRole === 'Instructor' ? '/instructor' : '/student';
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [openNotif, setOpenNotif] = useState(false);
+
+  const refreshNotifications = async () => {
+    if (!currentUser?.uid) return;
+    try {
+      const data = await aiService.fetchNotifications(currentUser.uid);
+      setNotifications(data.notifications || []);
+      setUnreadCount(data.unreadCount || 0);
+    } catch (error) {
+      console.warn('Failed to fetch notifications', error);
+    }
+  };
+
+  useEffect(() => {
+    if (!currentUser?.uid) return undefined;
+
+    const loadNotifications = async () => {
+      try {
+        const data = await aiService.fetchNotifications(currentUser.uid);
+        setNotifications(data.notifications || []);
+        setUnreadCount(data.unreadCount || 0);
+      } catch (error) {
+        console.warn('Failed to fetch notifications', error);
+      }
+    };
+
+    const kickoff = setTimeout(() => {
+      loadNotifications();
+    }, 0);
+    const timer = setInterval(loadNotifications, 20000);
+    return () => {
+      clearTimeout(kickoff);
+      clearInterval(timer);
+    };
+  }, [currentUser?.uid]);
 
   // Simple title mapping based on route
   const getPageTitle = () => {
@@ -45,10 +82,36 @@ export default function TopNavBar({ onToggleSidebar }) {
         </div>
 
         <div className="flex items-center gap-2 md:gap-4 shrink-0">
-          <button className="w-10 h-10 rounded-full hover:bg-indigo-50/50 dark:hover:bg-slate-800 flex items-center justify-center transition-all relative hidden sm:flex">
+          <button
+            onClick={() => setOpenNotif((prev) => !prev)}
+            className="w-10 h-10 rounded-full hover:bg-indigo-50/50 dark:hover:bg-slate-800 flex items-center justify-center transition-all relative hidden sm:flex"
+          >
             <Bell className="text-on-surface-variant dark:text-slate-300 w-5 h-5" />
-            <span className="absolute top-2 right-2 w-2 h-2 bg-error rounded-full ring-2 ring-white dark:ring-slate-900"></span>
+            {unreadCount > 0 && <span className="absolute top-1 right-1 min-w-4 h-4 px-1 bg-error text-white text-[10px] rounded-full ring-2 ring-white dark:ring-slate-900">{unreadCount}</span>}
           </button>
+          {openNotif && (
+            <div className="absolute right-8 top-16 w-80 max-h-96 overflow-y-auto rounded-xl border border-outline-variant/20 bg-white dark:bg-slate-900 shadow-xl p-2 z-50">
+              <div className="px-3 py-2 text-xs font-bold uppercase tracking-widest text-on-surface-variant dark:text-slate-400">Notifications</div>
+              {notifications.length === 0 && (
+                <div className="px-3 py-4 text-sm text-on-surface-variant dark:text-slate-400">No notifications yet.</div>
+              )}
+              {notifications.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={async () => {
+                    if (!item.readStatus) {
+                      await aiService.markNotificationRead(item.id);
+                      refreshNotifications();
+                    }
+                  }}
+                  className={`w-full text-left px-3 py-3 rounded-lg hover:bg-surface-container-low dark:hover:bg-slate-800 transition-colors ${item.readStatus ? 'opacity-70' : 'bg-indigo-50/60 dark:bg-indigo-950/30'}`}
+                >
+                  <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{item.message}</p>
+                  <p className="text-[11px] text-on-surface-variant dark:text-slate-400 mt-1">{new Date(item.createdAt).toLocaleString()}</p>
+                </button>
+              ))}
+            </div>
+          )}
           
           {currentUser && (
             <div className="flex items-center gap-3">

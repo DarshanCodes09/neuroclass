@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { db } from '../config/firebase';
-import { collection, query, where, getDocs, doc, updateDoc, arrayUnion } from 'firebase/firestore';
 import { Key } from 'lucide-react';
+import { aiService } from '../services/aiService';
 
 export default function JoinCourse() {
   const { currentUser } = useAuth();
@@ -23,26 +22,11 @@ export default function JoinCourse() {
 
     try {
       setLoading(true);
-      const q = query(collection(db, 'courses'), where('courseCode', '==', code.toUpperCase()));
-      const querySnapshot = await getDocs(q);
-
-      if (querySnapshot.empty) {
-        setError('No course found with this code.');
-        setLoading(false);
-        return;
-      }
-
-      const courseDoc = querySnapshot.docs[0];
-      const courseRef = doc(db, 'courses', courseDoc.id);
-
-      await updateDoc(courseRef, {
-        students: arrayUnion(currentUser.uid)
-      });
-
-      navigate('/dashboard');
+      await aiService.joinCourse({ courseCode: code.toUpperCase(), studentId: currentUser.uid });
+      navigate('/student/dashboard');
     } catch (err) {
       console.error(err);
-      setError('Failed to join course. Please try again.');
+      setError(err.message || 'Failed to join course. Please try again.');
     } finally {
       setLoading(false);
     }

@@ -1,47 +1,48 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { BrainCircuit, Upload, FileText, CheckCircle, Brain, Target, ShieldCheck, Sparkles, Loader2 } from 'lucide-react';
+import { BrainCircuit, Upload, FileText, CheckCircle, Brain, Target, ShieldCheck, Sparkles, Loader2, X } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { db, storage } from '../config/firebase';
-import { doc, onSnapshot, setDoc, updateDoc, arrayUnion } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { aiService } from '../services/aiService';
+
+const EMPTY_PROFILE = { status: 'calibrating', rubricCount: 0, sampleCount: 0 };
 
 export default function AIEvaluatorTraining() {
   const { currentUser } = useAuth();
   const fileInputRef = useRef(null);
   
-  const [profile, setProfile] = useState(null);
-  const [uploadingCategory, setUploadingCategory] = useState(null); // 'rubric', 'gold-high', 'gold-low', 'gold-avg'
+  const [courseId, setCourseId] = useState('');
+  const [profile, setProfile] = useState(EMPTY_PROFILE);
+  const [rubrics, setRubrics] = useState([]);
+  const [goldSamples, setGoldSamples] = useState([]);
+  const [uploadingCategory, setUploadingCategory] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(0);
-
-  // Fallback defaults if no profile exists yet
-  const trainingProgress = profile?.trainingProgress || 0;
-  const rubrics = profile?.rubrics || [];
-  const goldSamples = profile?.goldSamples || [];
-  const status = profile?.status || 'calibrating';
+  const [isTraining, setIsTraining] = useState(false);
+  const [sampleMeta, setSampleMeta] = useState({
+    high: { studentAnswer: '', marks: '', feedback: '' },
+    avg: { studentAnswer: '', marks: '', feedback: '' },
+    low: { studentAnswer: '', marks: '', feedback: '' },
+  });
+  const [statusMessage, setStatusMessage] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
 
   useEffect(() => {
-    if (!currentUser) return;
+    if (!courseId) return;
+    aiService.getTrainingProfile(courseId)
+      .then((data) => {
+        setProfile(data.profile || EMPTY_PROFILE);
+        setRubrics(data.rubrics || []);
+        setGoldSamples(data.samples || []);
+      })
+      .catch(() => {});
+  }, [courseId]);
 
-    const docRef = doc(db, 'ai_evaluator_profiles', currentUser.uid);
-    const unsubscribe = onSnapshot(docRef, (snap) => {
-      if (snap.exists()) {
-        setProfile(snap.data());
-      } else {
-        // Initialize empty profile
-        setDoc(docRef, {
-          instructorId: currentUser.uid,
-          trainingProgress: 0,
-          rubrics: [],
-          goldSamples: [],
-          status: 'calibrating'
-        });
-      }
-    });
-
-    return () => unsubscribe();
-  }, [currentUser]);
+  const trainingProgress = profile?.status === 'ready' ? 100 : Math.min(99, (profile.rubricCount || 0) * 20 + (profile.sampleCount || 0) * 20);
+  const status = profile?.status || 'calibrating';
 
   const triggerUpload = (category) => {
+    if (!courseId) {
+      alert("Please enter a Course ID first.");
+      return;
+    }
     setUploadingCategory(category);
     if (fileInputRef.current) {
       fileInputRef.current.click();
@@ -49,69 +50,99 @@ export default function AIEvaluatorTraining() {
   };
 
   const handleFileChange = async (e) => {
-    const file = e.target.files[0];
-    if (!file || !currentUser || !uploadingCategory) return;
+    const pickedFiles = Array.from(e.target.files || []);
+    if (!pickedFiles.length || !currentUser || !uploadingCategory || !courseId) {
+      setUploadingCategory(null);
+      return;
+    }
 
     // Reset input so the same file could be selected again if needed
     e.target.value = null;
-    
-    // Create storage reference
-    const storagePath = `ai_training/${currentUser.uid}/${uploadingCategory}/${Date.now()}_${file.name}`;
-    const storageRef = ref(storage, storagePath);
-    
-    try {
-      setUploadProgress(10);
-      let downloadURL = "";
-      
-      try {
-        await Promise.race([
-          uploadBytes(storageRef, file),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("CORS_TIMEOUT")), 3000))
-        ]);
-        setUploadProgress(100);
-        downloadURL = await getDownloadURL(storageRef);
-      } catch (uploadObjError) {
-        console.warn("Storage upload bypassed (CORS/Timeout). Faking URL.");
-        setUploadProgress(100);
-        downloadURL = `mocked-url-for-${file.name}`;
-      }
-      
-      // Update Firestore
-      const docRef = doc(db, 'ai_evaluator_profiles', currentUser.uid);
-      
-      const fileMetadata = {
-        fileName: file.name,
-        fileUrl: downloadURL,
-        uploadedAt: new Date().toISOString()
-      };
 
+    try {
+      setErrorMessage('');
+      setStatusMessage('');
+      setUploadProgress(10);
       if (uploadingCategory === 'rubric') {
-        await updateDoc(docRef, {
-          rubrics: arrayUnion(fileMetadata)
+        const response = await aiService.uploadRubrics({
+          courseId,
+          instructorId: currentUser.uid,
+          files: pickedFiles,
         });
+        setRubrics((prev) => [...prev, ...(response.rubrics || [])]);
+        setStatusMessage(`Uploaded ${pickedFiles.length} rubric file(s).`);
       } else {
-        // It's a gold standard sample
-        const sampleType = uploadingCategory.split('-')[1]; // high, low, or avg
-        const sampleMetadata = { ...fileMetadata, type: sampleType };
-        await updateDoc(docRef, {
-          goldSamples: arrayUnion(sampleMetadata)
+        const sampleType = uploadingCategory.split('-')[1];
+        const meta = sampleMeta[sampleType];
+        const response = await aiService.uploadGoldSample({
+          courseId,
+          instructorId: currentUser.uid,
+          sampleType,
+          studentAnswer: meta.studentAnswer,
+          marks: meta.marks,
+          feedback: meta.feedback,
+          file: pickedFiles[0],
         });
+        setGoldSamples((prev) => [...prev, response.sample]);
+        setStatusMessage(`Uploaded ${sampleType} sample.`);
       }
+      await refreshProfile();
+      setUploadProgress(100);
     } catch (error) {
-      console.error("Upload failed", error);
+      console.error('Upload failed', error);
+      setErrorMessage(error.message || 'Upload failed.');
     } finally {
       setUploadingCategory(null);
       setUploadProgress(0);
     }
   };
 
+  const refreshProfile = async () => {
+    const data = await aiService.getTrainingProfile(courseId);
+    setProfile(data.profile || EMPTY_PROFILE);
+    setRubrics(data.rubrics || []);
+    setGoldSamples(data.samples || []);
+  };
+
+  const handleRemoveRubric = async (rubricId) => {
+    if (!rubricId) return;
+    try {
+      await aiService.deleteRubric(rubricId);
+      await refreshProfile();
+      setStatusMessage('Rubric removed.');
+    } catch (error) {
+      setErrorMessage(error.message || 'Failed to remove rubric.');
+    }
+  };
+
+  const handleRemoveSample = async (sampleId) => {
+    if (!sampleId) return;
+    try {
+      await aiService.deleteSample(sampleId);
+      await refreshProfile();
+      setStatusMessage('Gold sample removed.');
+    } catch (error) {
+      setErrorMessage(error.message || 'Failed to remove gold sample.');
+    }
+  };
+
   const handleStartTraining = async () => {
-    if (!currentUser) return;
-    const docRef = doc(db, 'ai_evaluator_profiles', currentUser.uid);
-    await updateDoc(docRef, {
-      status: 'ready',
-      trainingProgress: 100
-    });
+    if (!currentUser || !courseId) return;
+    try {
+      setIsTraining(true);
+      setErrorMessage('');
+      setStatusMessage('');
+      const result = await aiService.startTraining({
+        courseId,
+        instructorId: currentUser.uid,
+      });
+      await refreshProfile();
+      setStatusMessage(`Training complete. ${result.sampleCount || 0} sample(s) calibrated.`);
+    } catch (error) {
+      setErrorMessage(error.message || 'Training failed.');
+    } finally {
+      setIsTraining(false);
+    }
   };
 
   return (
@@ -129,6 +160,12 @@ export default function AIEvaluatorTraining() {
         <div>
           <h2 className="text-4xl font-black font-headline tracking-tighter text-on-surface">AI Evaluator Training</h2>
           <p className="text-on-surface-variant font-medium mt-1">Calibrate exactly how the NeuroClass engine evaluates your students.</p>
+          <input
+            value={courseId}
+            onChange={(e) => setCourseId(e.target.value)}
+            placeholder="Enter Course ID"
+            className="mt-4 px-3 py-2 rounded-lg border border-outline-variant/30 bg-surface-container-low text-sm"
+          />
         </div>
         <div className="bg-surface-container-lowest px-6 py-4 rounded-xl border border-outline-variant/20 shadow-sm flex items-center gap-6">
           <div>
@@ -174,17 +211,24 @@ export default function AIEvaluatorTraining() {
             </div>
 
             <div className="mt-6 space-y-3">
-              <h4 className="text-xs font-bold uppercase tracking-widest text-on-surface-variant">Uploaded Documents ({rubrics.length})</h4>
-              {rubrics.length === 0 ? (
+              <h4 className="text-xs font-bold uppercase tracking-widest text-on-surface-variant">Uploaded Documents ({profile.rubricCount || rubrics.length})</h4>
+              {rubrics.length === 0 && !profile.rubricCount ? (
                  <p className="text-xs text-on-surface-variant italic">No rubrics uploaded yet.</p>
               ) : (
                 rubrics.map((rubric, idx) => (
-                  <div key={idx} className="flex items-center justify-between p-3 rounded-lg bg-surface-container-low border border-outline-variant/10">
+                  <div key={idx} className="flex items-center justify-between p-3 rounded-lg bg-surface-container-low border border-outline-variant/10 group relative">
                     <div className="flex items-center gap-3">
                       <FileText className="w-4 h-4 text-primary" />
-                      <span className="text-sm font-medium truncate max-w-[200px]">{rubric.fileName}</span>
+                      <span className="text-sm font-medium truncate max-w-[150px] sm:max-w-[200px]" title={rubric.fileName}>{rubric.fileName}</span>
                     </div>
-                    <CheckCircle className="w-4 h-4 text-emerald-500" />
+                    <div className="flex items-center gap-3">
+                      <CheckCircle className="w-4 h-4 text-emerald-500" />
+                      <button 
+                          onClick={(e) => { e.stopPropagation(); handleRemoveRubric(rubric.id); }}
+                        className="p-1 rounded-full bg-red-100 text-red-600 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-200">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
                   </div>
                 ))
               )}
@@ -205,7 +249,7 @@ export default function AIEvaluatorTraining() {
             <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-4">
                {['high', 'low', 'avg'].map(type => {
                  // Check if we have a sample of this type
-                 const sample = goldSamples.find(s => s.type === type);
+                 const sample = goldSamples.find(s => (s.type || s.sampleType) === type);
                  const isUploading = uploadingCategory === `gold-${type}`;
                  
                  const titleMap = {
@@ -226,14 +270,42 @@ export default function AIEvaluatorTraining() {
                           <p className="text-xs font-bold text-center text-primary">{uploadProgress}%</p>
                         </>
                      ) : sample ? (
-                        <>
+                        <div className="relative w-full h-full flex flex-col justify-center items-center group">
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); handleRemoveSample(sample.id); }}
+                            className="absolute top-2 right-2 p-1.5 rounded-full bg-red-100 text-red-600 opacity-0 group-hover:opacity-100 transition-opacity z-10 hover:bg-red-200 shadow-sm"
+                            title="Remove sample">
+                            <X className="w-3 h-3" />
+                          </button>
                           <CheckCircle className="w-6 h-6 text-emerald-500 mb-2" />
-                          <p className="text-xs font-bold text-center text-emerald-700 truncate w-full px-2" title={sample.fileName}>{sample.fileName}</p>
-                        </>
+                          <p className="text-xs font-bold text-center text-emerald-700 truncate w-full px-2" title={sample.fileName || titleMap[type]}>
+                            {sample.fileName || `${titleMap[type]} saved`}
+                          </p>
+                        </div>
                      ) : (
                         <>
                           <Upload className="w-6 h-6 text-on-surface-variant mb-2 group-hover:text-primary transition-colors" />
                           <p className="text-xs font-bold text-center text-on-surface">Add {titleMap[type]}</p>
+                          <input
+                            value={sampleMeta[type].marks}
+                            onChange={(e) => setSampleMeta((prev) => ({ ...prev, [type]: { ...prev[type], marks: e.target.value } }))}
+                            placeholder="Marks"
+                            className="mt-2 px-2 py-1 rounded border border-outline-variant/20 text-xs w-full"
+                          />
+                          <textarea
+                            value={sampleMeta[type].studentAnswer}
+                            onChange={(e) => setSampleMeta((prev) => ({ ...prev, [type]: { ...prev[type], studentAnswer: e.target.value } }))}
+                            placeholder="Paste the student's answer or upload a file"
+                            className="mt-1 px-2 py-1 rounded border border-outline-variant/20 text-xs w-full"
+                            rows={3}
+                          />
+                          <textarea
+                            value={sampleMeta[type].feedback}
+                            onChange={(e) => setSampleMeta((prev) => ({ ...prev, [type]: { ...prev[type], feedback: e.target.value } }))}
+                            placeholder="Feedback"
+                            className="mt-1 px-2 py-1 rounded border border-outline-variant/20 text-xs w-full"
+                            rows={2}
+                          />
                         </>
                      )}
                    </div>
@@ -250,6 +322,8 @@ export default function AIEvaluatorTraining() {
 
         {/* Action Bar */}
         <section className="col-span-12 mt-4">
+          {errorMessage && <div className="mb-3 p-3 rounded bg-red-50 text-red-700 text-sm">{errorMessage}</div>}
+          {statusMessage && <div className="mb-3 p-3 rounded bg-emerald-50 text-emerald-700 text-sm">{statusMessage}</div>}
           <div className="bg-surface-container-lowest p-6 rounded-xl border border-outline-variant/10 shadow-lg flex flex-col sm:flex-row items-center justify-between gap-6">
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 rounded-full bg-surface-container flex items-center justify-center">
@@ -262,9 +336,9 @@ export default function AIEvaluatorTraining() {
             </div>
             <button 
               onClick={handleStartTraining}
-              disabled={rubrics.length === 0 && goldSamples.length === 0}
-              className="w-full sm:w-auto px-8 py-3 primary-gradient text-on-primary rounded-full font-semibold shadow-lg shadow-primary/25 hover:shadow-primary/40 transition-shadow disabled:opacity-50 disabled:cursor-not-allowed">
-               Start Training Sequence
+              disabled={isTraining || !courseId || ((profile.rubricCount || rubrics.length) === 0 && (profile.sampleCount || goldSamples.length) === 0)}
+              className="w-full sm:w-auto px-8 py-3 primary-gradient text-on-primary rounded-full font-semibold shadow-lg shadow-primary/25 hover:shadow-primary/40 transition-shadow disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+               {isTraining ? <><Loader2 className="w-5 h-5 animate-spin" /> Calibrating Engine...</> : 'Start Training Sequence'}
             </button>
           </div>
         </section>

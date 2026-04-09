@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { db } from '../config/firebase';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
-import { GraduationCap, Sparkles, User, AlertCircle } from 'lucide-react';
+import { GraduationCap, Sparkles, User, Eye } from 'lucide-react';
+import { aiService } from '../services/aiService';
 
 export default function StudentGrades() {
   const { currentUser } = useAuth();
@@ -10,19 +9,14 @@ export default function StudentGrades() {
 
   useEffect(() => {
     if (!currentUser) return;
-    const q = query(
-      collection(db, 'submissions'), 
-      where('studentId', '==', currentUser.uid),
-      where('status', 'in', ['approved', 'overridden'])
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = [];
-      snapshot.forEach(d => data.push({ id: d.id, ...d.data() }));
-      data.sort((a,b) => (b.submittedAt?.toMillis() || 0) - (a.submittedAt?.toMillis() || 0));
-      setGrades(data);
-    });
-    return () => unsubscribe();
+    let cancelled = false;
+    const load = async () => {
+      const data = await aiService.fetchGrades(currentUser.uid);
+      if (!cancelled) setGrades(data.grades || []);
+    };
+    load();
+    const interval = setInterval(load, 10000);
+    return () => { cancelled = true; clearInterval(interval); };
   }, [currentUser]);
 
   return (
@@ -53,6 +47,16 @@ export default function StudentGrades() {
                       {grade.status === 'overridden' ? 'Instructor Override' : 'AI Autopilot'}
                     </span>
                   </div>
+                  {grade.fileUrl && (
+                    <a
+                      href={aiService.resolveFileUrl(grade.fileUrl)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-2 text-xs font-bold text-primary hover:underline inline-flex items-center gap-1"
+                    >
+                      <Eye className="w-3 h-3" /> Open submitted file
+                    </a>
+                  )}
                 </div>
                 <div className="w-20 h-20 rounded-full flex flex-col items-center justify-center border-4 border-surface shadow-sm relative overflow-hidden bg-primary-fixed/30">
                   <div className="absolute inset-x-0 bottom-0 bg-primary/20" style={{height: `${Math.min(grade.finalScore, 100)}%`}}></div>

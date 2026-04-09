@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { db, storage } from '../config/firebase';
-import { collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { Plus, Sparkles, CheckCircle, Paperclip, ArrowUp, FileText, Video, Library } from 'lucide-react';
+import { Plus, Sparkles, CheckCircle, Paperclip, ArrowUp, FileText, Library } from 'lucide-react';
 import { aiService } from '../services/aiService';
+
+function getTutorStorageKey(userId) {
+  return `neuroclass:tutor:${userId}`;
+}
 
 export default function AITutor({ courseIdFilter }) {
   const { currentUser, userRole } = useAuth();
@@ -26,46 +27,51 @@ export default function AITutor({ courseIdFilter }) {
   // 1. Fetch user's courses to populate sidebar
   useEffect(() => {
     if (!currentUser) return;
-    const q = userRole === 'Instructor' 
-      ? query(collection(db, 'courses'), where('instructorId', '==', currentUser.uid))
-      : query(collection(db, 'courses'), where('students', 'array-contains', currentUser.uid));
+    let cancelled = false;
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const courseData = [];
-      snapshot.forEach(doc => {
-        courseData.push({ id: doc.id, ...doc.data() });
-      });
-      setCourses(courseData);
-      // Auto-select course based on priority: courseIdFilter > router state > first course
-      if (courseIdFilter) {
-        setSelectedCourseId(courseIdFilter);
-      } else if (location.state?.selectedCourseId) {
-        setSelectedCourseId(location.state.selectedCourseId);
-      } else if (courseData.length > 0 && !selectedCourseId) {
-        setSelectedCourseId(courseData[0].id);
+    const loadCourses = async () => {
+      try {
+        const filters = userRole === 'Instructor' ? { instructorId: currentUser.uid } : { studentId: currentUser.uid };
+        const data = await aiService.fetchCourses(filters);
+        if (cancelled) return;
+        const courseData = data.courses || [];
+        setCourses(courseData);
+        
+        // Auto-select course
+        if (courseIdFilter) {
+          setSelectedCourseId(courseIdFilter);
+        } else if (location.state?.selectedCourseId) {
+          setSelectedCourseId(location.state.selectedCourseId);
+        } else if (courseData.length > 0) {
+          setSelectedCourseId(prev => prev || courseData[0].id);
+        }
+      } catch (err) {
+         console.error("Failed to load courses for AI Tutor:", err);
       }
-    });
+    };
 
-    return () => unsubscribe();
+    loadCourses();
+    const interval = setInterval(loadCourses, 10000);
+
+    return () => { cancelled = true; clearInterval(interval); };
   }, [currentUser, userRole, location.state, courseIdFilter]);
 
-  // 2. Fetch all messages belonging to the user
+  // 2. Load message history from local persistence
   useEffect(() => {
     if (!currentUser) return;
-    const q = query(
-      collection(db, 'messages'),
-      where('userId', '==', currentUser.uid),
-      orderBy('createdAt', 'asc')
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const msgs = [];
-      snapshot.forEach((doc) => msgs.push({ id: doc.id, ...doc.data() }));
-      setAllMessages(msgs);
-    });
-
-    return () => unsubscribe();
+    try {
+      const raw = localStorage.getItem(getTutorStorageKey(currentUser.uid));
+      setAllMessages(raw ? JSON.parse(raw) : []);
+    } catch (error) {
+      console.error('Failed to load tutor messages:', error);
+      setAllMessages([]);
+    }
   }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    localStorage.setItem(getTutorStorageKey(currentUser.uid), JSON.stringify(allMessages));
+  }, [allMessages, currentUser]);
 
   // 3. Filter messages locally by the actively selected course
   useEffect(() => {
@@ -81,51 +87,53 @@ export default function AITutor({ courseIdFilter }) {
 
   const handleSendMessage = async (e) => {
     e?.preventDefault();
-    if (!inputText.trim() && !currentUser) return;
+    if (!inputText.trim() || !currentUser) return;
     if (!selectedCourseId) {
       alert("Please select a course to start chatting.");
       return;
     }
 
+    const nextInput = inputText.trim();
     const userMsg = {
-      text: inputText,
+      id: crypto.randomUUID(),
+      text: nextInput,
       role: 'user',
       userId: currentUser.uid,
       courseId: selectedCourseId,
-      createdAt: serverTimestamp(),
+      createdAt: new Date().toISOString(),
       avatar: currentUser.photoURL || null
     };
 
     setInputText('');
+    setAllMessages((prev) => [...prev, userMsg]);
     
     try {
-      await addDoc(collection(db, 'messages'), userMsg);
-      
       setIsTyping(true);
       try {
-        const historyContext = messages.slice(-6).map(m => ({ 
+        const historyContext = [...messages, userMsg].slice(-6).map(m => ({ 
           role: m.role === 'ai' ? 'model' : 'user', 
           content: m.text 
         }));
         
-        const aiResponseText = await aiService.chatWithTutor(inputText, selectedCourseId, historyContext);
-        
-        await addDoc(collection(db, 'messages'), {
+        const aiResponseText = await aiService.chatWithTutor(nextInput, selectedCourseId, historyContext);
+        setAllMessages((prev) => [...prev, {
+          id: crypto.randomUUID(),
           text: aiResponseText,
           role: 'ai',
           userId: currentUser.uid,
           courseId: selectedCourseId,
-          createdAt: serverTimestamp()
-        });
+          createdAt: new Date().toISOString()
+        }]);
       } catch (err) {
         console.error("AI Error:", err);
-        await addDoc(collection(db, 'messages'), {
+        setAllMessages((prev) => [...prev, {
+          id: crypto.randomUUID(),
           text: "I'm having trouble connecting to the NeuroClass AI Core. Please ensure the backend server is running.",
           role: 'ai',
           userId: currentUser.uid,
           courseId: selectedCourseId,
-          createdAt: serverTimestamp()
-        });
+          createdAt: new Date().toISOString()
+        }]);
       } finally {
         setIsTyping(false);
       }
@@ -142,20 +150,18 @@ export default function AITutor({ courseIdFilter }) {
 
     try {
       setUploading(true);
-      const storageRef = ref(storage, `uploads/${currentUser.uid}/${Date.now()}_${file.name}`);
-      await uploadBytes(storageRef, file);
-      const downloadURL = await getDownloadURL(storageRef);
-
-      await addDoc(collection(db, 'messages'), {
+      const downloadURL = URL.createObjectURL(file);
+      setAllMessages((prev) => [...prev, {
+        id: crypto.randomUUID(),
         text: `Attached file: ${file.name}`,
         fileUrl: downloadURL,
         fileName: file.name,
         role: 'user',
         userId: currentUser.uid,
         courseId: selectedCourseId,
-        createdAt: serverTimestamp(),
+        createdAt: new Date().toISOString(),
         avatar: currentUser.photoURL || null
-      });
+      }]);
 
     } catch (err) {
       console.error("Error uploading file", err);

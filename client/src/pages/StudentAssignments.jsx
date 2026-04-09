@@ -1,8 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { db, storage } from '../config/firebase';
-import { collection, addDoc, query, where, onSnapshot, serverTimestamp, doc, updateDoc } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { FileText, Calendar, UploadCloud, CheckCircle, AlertCircle, Sparkles } from 'lucide-react';
 import { aiService } from '../services/aiService';
 
@@ -22,47 +19,43 @@ export default function StudentAssignments({ courseIdFilter }) {
   // 1. Fetch courses student is enrolled in
   useEffect(() => {
     if (!currentUser) return;
-    const q = query(collection(db, 'courses'), where('students', 'array-contains', currentUser.uid));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const courseData = [];
-      snapshot.forEach(doc => courseData.push({ id: doc.id, ...doc.data() }));
-      setCourses(courseData);
-    });
-    return () => unsubscribe();
+    let cancelled = false;
+    const load = async () => {
+      const data = await aiService.fetchCourses({ studentId: currentUser.uid });
+      if (!cancelled) setCourses(data.courses || []);
+    };
+    load();
+    const interval = setInterval(load, 10000);
+    return () => { cancelled = true; clearInterval(interval); };
   }, [currentUser]);
 
   // 2. Fetch assignments for those courses
   useEffect(() => {
     if (courses.length === 0) return;
-    const courseIds = courses.map(c => c.id);
-    // Firestore 'in' query limit is 10, assume student is in < 10 courses for demo
-    const chunkedIds = courseIds.slice(0, 10);
-    const q = courseIdFilter 
-      ? query(collection(db, 'assignments'), where('courseId', '==', courseIdFilter))
-      : query(collection(db, 'assignments'), where('courseId', 'in', chunkedIds));
-      
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const assnData = [];
-      snapshot.forEach(doc => assnData.push({ id: doc.id, ...doc.data() }));
-      assnData.sort((a,b) => new Date(a.dueDate) - new Date(b.dueDate));
-      setAssignments(assnData);
-    });
-    return () => unsubscribe();
-  }, [courses, courseIdFilter]);
+    let cancelled = false;
+    const load = async () => {
+      const data = await aiService.fetchAssignments(courseIdFilter ? { courseId: courseIdFilter } : { studentId: currentUser.uid });
+      if (!cancelled) setAssignments((data.assignments || []).sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate)));
+    };
+    load();
+    const interval = setInterval(load, 10000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [courses, courseIdFilter, currentUser?.uid]);
 
   // 3. Fetch user's previous submissions to grey out completed assignments
   useEffect(() => {
     if (!currentUser) return;
-    const q = query(collection(db, 'submissions'), where('studentId', '==', currentUser.uid));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    let cancelled = false;
+    const load = async () => {
+      const data = await aiService.fetchSubmissions({ studentId: currentUser.uid });
+      if (cancelled) return;
       const subData = {};
-      snapshot.forEach(doc => {
-        const data = doc.data();
-        subData[data.assignmentId] = data; // Keep entire submission object to read status
-      });
+      (data.submissions || []).forEach((s) => { subData[s.assignmentId] = s; });
       setSubmissions(subData);
-    });
-    return () => unsubscribe();
+    };
+    load();
+    const interval = setInterval(load, 8000);
+    return () => { cancelled = true; clearInterval(interval); };
   }, [currentUser]);
 
   const handleSubmit = async () => {
@@ -72,54 +65,41 @@ export default function StudentAssignments({ courseIdFilter }) {
     setError('');
 
     try {
-      // 1. Upload file to Storage
-      const storageRef = ref(storage, `submissions/${selectedAssn.id}/${currentUser.uid}_${uploadFile.name}`);
-      let downloadURL = "";
-      try {
-        await Promise.race([
-          uploadBytes(storageRef, uploadFile),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("CORS_TIMEOUT")), 3000))
-        ]);
-        downloadURL = await getDownloadURL(storageRef);
-      } catch (uploadObjError) {
-        console.warn("Storage upload bypassed (CORS/Timeout). Faking URL.");
-        downloadURL = `mocked-url-for-${uploadFile.name}`;
-      }
+      const uploadMeta = await aiService.uploadSubmissionFile(uploadFile);
+      const downloadURL = uploadMeta.fileUrl;
 
       // 2. Real AI Evaluation via Python Service Layer
       let aiScore = 0;
       let aiFeedback = "Evaluation failed connection.";
       try {
         const evaluation = await aiService.evaluateSubmission({
-          fileUrl: downloadURL,
-          fileName: uploadFile.name,
+          textContent: `Submitted file: ${uploadMeta.fileName}. Download URL: ${downloadURL}`,
           courseId: selectedAssn.courseId,
+          instructorId: selectedAssn.instructorId,
+          studentId: currentUser.uid,
           assignmentPrompt: selectedAssn.description,
           maxScore: selectedAssn.maxScore
         });
         aiScore = evaluation.score;
         aiFeedback = evaluation.feedback;
-      } catch (evalError) {
+      } catch {
         // Keep moving forward gracefully so the student isn't blocked
         console.warn("Python Evaluation Server unreachable. Defaulting to empty evaluation.");
         aiFeedback = "ERROR: Auto-grading backend offline. Pending manual instructor review.";
       }
 
-      // 3. Create Submission Doc in Firestore
-      await addDoc(collection(db, 'submissions'), {
+      await aiService.createSubmission({
         assignmentId: selectedAssn.id,
         courseId: selectedAssn.courseId,
         instructorId: selectedAssn.instructorId,
         studentId: currentUser.uid,
         studentName: currentUser.displayName || currentUser.email.split('@')[0],
         fileUrl: downloadURL,
-        fileName: uploadFile.name,
-        submittedAt: serverTimestamp(),
-        // Evaluation metadata:
-        status: 'evaluated', // "evaluated" means AI did its job, waiting on instructor
-        aiScore: aiScore,
-        aiFeedback: aiFeedback,
-        finalScore: null
+        fileName: uploadMeta.fileName || uploadFile.name,
+        status: 'evaluated',
+        aiScore,
+        aiFeedback,
+        maxScore: selectedAssn.maxScore,
       });
 
       setUploadFile(null);

@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { supabase } from '../config/supabase';
 import { BookOpen, BarChart2, Library, Plus, Copy } from 'lucide-react';
+import { aiService } from '../services/aiService';
 
 export default function InstructorDashboard() {
   const { currentUser } = useAuth();
@@ -13,26 +13,20 @@ export default function InstructorDashboard() {
 
   useEffect(() => {
     if (!currentUser) return;
-
+    let cancelled = false;
     const fetchCourses = async () => {
-      const { data, error } = await supabase
-        .from('courses')
-        .select('*')
-        .eq('instructorId', currentUser.uid);
-      if (data) setCourses(data);
+      try {
+        const data = await aiService.fetchCourses({ instructorId: currentUser.uid });
+        if (!cancelled) setCourses(data.courses || []);
+      } catch (error) {
+        console.error('Failed to load dashboard courses:', error);
+      }
     };
-
     fetchCourses();
-
-    const subscription = supabase
-      .channel('instructor-dashboard')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'courses', filter: `instructorId=eq.${currentUser.uid}` }, () => {
-        fetchCourses();
-      })
-      .subscribe();
-
+    const interval = setInterval(fetchCourses, 12000);
     return () => {
-      supabase.removeChannel(subscription);
+      cancelled = true;
+      clearInterval(interval);
     };
   }, [currentUser]);
 

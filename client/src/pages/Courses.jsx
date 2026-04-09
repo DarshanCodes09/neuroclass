@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { db } from '../config/firebase';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { BookOpen, Users, Star, Copy } from 'lucide-react';
+import { aiService } from '../services/aiService';
 
 export default function Courses() {
   const { currentUser, userRole } = useAuth();
@@ -13,24 +12,29 @@ export default function Courses() {
 
   useEffect(() => {
     if (!currentUser) return;
-
-    const q = userRole === 'Instructor' 
-      ? query(collection(db, 'courses'), where('instructorId', '==', currentUser.uid))
-      : query(collection(db, 'courses'), where('students', 'array-contains', currentUser.uid));
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const courseData = [];
-      snapshot.forEach(doc => {
-        courseData.push({ id: doc.id, ...doc.data() });
-      });
-      setCourses(courseData);
-      setLoading(false);
-    }, (error) => {
-      console.error("Firestore Error:", error.message);
-      setLoading(false);
-    });
-
-    return () => unsubscribe();
+    let cancelled = false;
+    const load = async () => {
+      try {
+        setLoading(true);
+        const data = await aiService.fetchCourses({
+          instructorId: userRole === 'Instructor' ? currentUser.uid : undefined,
+          studentId: userRole === 'Student' ? currentUser.uid : undefined,
+        });
+        if (!cancelled) {
+          setCourses(data.courses || []);
+        }
+      } catch (error) {
+        console.error('Failed to load courses:', error);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    load();
+    const interval = setInterval(load, 12000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [currentUser, userRole]);
 
   return (

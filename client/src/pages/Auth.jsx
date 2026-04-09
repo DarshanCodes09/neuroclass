@@ -36,7 +36,7 @@ export default function Auth() {
       if (isSignUp) {
         await signup(email, password, selectedSignupRole);
       } else {
-        await login(email, password);
+        await login(email, password, selectedSignupRole);
       }
       // Not navigating here. useEffect handles it securely once userRole is determined.
     } catch (err) {
