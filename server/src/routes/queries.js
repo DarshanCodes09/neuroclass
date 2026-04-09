@@ -2,16 +2,15 @@
 // Persists every student text query + AI response into student_queries table.
 // This data is used for AI agent training in LangChain / LangGraph (Google Colab).
 
-const express = require('express');
-const router  = express.Router();
+const express  = require('express');
+const router   = express.Router();
 const supabase = require('../supabase');
 
-/** Extract authenticated Supabase user from Bearer JWT */
 async function getUser(req) {
-  const token = (req.headers.authorization || '').replace('Bearer ', '');
+  const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  if (!token) return null;
   const { data: { user }, error } = await supabase.auth.getUser(token);
-  if (error || !user) return null;
-  return user;
+  return error ? null : user;
 }
 
 // ── POST /api/queries ─────────────────────────────────────────────────────────
@@ -34,7 +33,6 @@ router.post('/', async (req, res) => {
         context:    context   || null,
         thread_id:  sessionId || null,
         provider:   provider  || 'gemini',
-        query_type: queryType || 'general',
       })
       .select()
       .single();
@@ -48,7 +46,7 @@ router.post('/', async (req, res) => {
 });
 
 // ── PATCH /api/queries/:id/response ──────────────────────────────────────────
-// Store the AI reply on an existing query row.
+// Store AI reply on an existing query row.
 // Body: { responseText, provider? }
 router.patch('/:id/response', async (req, res) => {
   try {
@@ -78,7 +76,7 @@ router.patch('/:id/response', async (req, res) => {
 });
 
 // ── GET /api/queries/my ───────────────────────────────────────────────────────
-// Authenticated student: get their own query history
+// Authenticated student: their own query history.
 // Query params: courseId?, limit? (default 50)
 router.get('/my', async (req, res) => {
   try {
@@ -86,15 +84,15 @@ router.get('/my', async (req, res) => {
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
     const { courseId, limit = 50 } = req.query;
-    let query = supabase
+    let q = supabase
       .from('student_queries')
-      .select('*')
+      .select('id, query_text, ai_reply, provider, created_at, course_id, thread_id')
       .eq('student_id', user.id)
       .order('created_at', { ascending: false })
-      .limit(parseInt(limit));
-    if (courseId) query = query.eq('course_id', courseId);
+      .limit(parseInt(limit, 10));
+    if (courseId) q = q.eq('course_id', courseId);
 
-    const { data, error } = await query;
+    const { data, error } = await q;
     if (error) throw error;
     res.json(data);
   } catch (err) {
@@ -104,13 +102,12 @@ router.get('/my', async (req, res) => {
 });
 
 // ── GET /api/queries/course/:courseId ─────────────────────────────────────────
-// Instructor view: all queries for their course (for AI training oversight)
+// Instructor view: all queries for their course (AI training oversight).
 router.get('/course/:courseId', async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-    // Verify instructor owns this course
     const { data: course, error: courseErr } = await supabase
       .from('courses')
       .select('id')

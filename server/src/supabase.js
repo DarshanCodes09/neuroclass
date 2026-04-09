@@ -1,20 +1,23 @@
 // server/src/supabase.js
-// Supabase client for server-side use (uses SERVICE ROLE KEY — never expose to client)
+// Supabase admin client (SERVICE ROLE KEY) — server-side only, never expose to client.
+// Used by all routes and controllers for DB + Storage operations.
 const { createClient } = require('@supabase/supabase-js');
 
-if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-  throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in environment variables');
+const url = process.env.SUPABASE_URL;
+const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!url || !key) {
+  throw new Error(
+    'Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY.\n' +
+    'Copy server/.env.example → server/.env and fill in the values.'
+  );
 }
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-  {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  }
-);
+const supabase = createClient(url, key, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false,
+  },
+});
 
 module.exports = supabase;
