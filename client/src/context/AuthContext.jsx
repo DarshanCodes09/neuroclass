@@ -1,6 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { isSupabaseConfigured, supabase, supabaseConfigError } from '../config/supabase';
+import { supabase } from '../config/supabase';
 
 const AuthContext = createContext();
 
@@ -12,16 +12,8 @@ export function AuthProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null);
   const [userRole, setUserRole] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [authError, setAuthError] = useState(isSupabaseConfigured ? '' : supabaseConfigError);
-
-  function ensureSupabaseConfigured() {
-    if (!isSupabaseConfigured || !supabase) {
-      throw new Error(supabaseConfigError);
-    }
-  }
 
   async function fetchUserRole(uid) {
-    ensureSupabaseConfigured();
     try {
       const { data } = await supabase
         .from('profiles')
@@ -40,7 +32,6 @@ export function AuthProvider({ children }) {
   }
 
   async function upsertUserRole(user, preferredRole) {
-    ensureSupabaseConfigured();
     const fallbackRole = preferredRole || 'Student';
     const dbRole = fallbackRole === 'Instructor' ? 'teacher' : 'student';
     
@@ -70,7 +61,6 @@ export function AuthProvider({ children }) {
   }
 
   async function signup(email, password, role = 'Student', name = '') {
-    ensureSupabaseConfigured();
     const { data: { user }, error } = await supabase.auth.signUp({
       email,
       password,
@@ -92,7 +82,6 @@ export function AuthProvider({ children }) {
   }
 
   async function login(email, password, preferredRole = null) {
-    ensureSupabaseConfigured();
     if (preferredRole) {
       localStorage.setItem('neuroclass-preferred-role', preferredRole);
     }
@@ -111,35 +100,21 @@ export function AuthProvider({ children }) {
   }
 
   async function loginWithGoogle(preferredRole = 'Student') {
-    ensureSupabaseConfigured();
     localStorage.setItem('neuroclass-preferred-role', preferredRole);
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: {
-        redirectTo: `${window.location.origin}/`,
-      },
     });
     if (error) throw error;
     return data;
   }
 
   async function logout() {
-    ensureSupabaseConfigured();
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
   }
 
   useEffect(() => {
     let isMounted = true;
-    if (!isSupabaseConfigured || !supabase) {
-      setCurrentUser(null);
-      setUserRole(null);
-      setAuthError(supabaseConfigError);
-      setLoading(false);
-      return () => {
-        isMounted = false;
-      };
-    }
 
     // Fail-safe: never allow auth bootstrap to keep the app blank forever.
     const fallbackTimer = setTimeout(() => {
@@ -206,7 +181,6 @@ export function AuthProvider({ children }) {
   }, []);
 
   async function switchRole() {
-    ensureSupabaseConfigured();
     if (!currentUser) return;
     const newRole = userRole === 'Instructor' ? 'Student' : 'Instructor';
     const dbRole = newRole === 'Instructor' ? 'teacher' : 'student';
@@ -217,7 +191,6 @@ export function AuthProvider({ children }) {
   const value = {
     currentUser,
     userRole,
-    authError,
     login,
     signup,
     loginWithGoogle,

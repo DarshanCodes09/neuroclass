@@ -13,7 +13,7 @@ export default function Auth() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   
-  const { login, signup, loginWithGoogle, currentUser, userRole, authError } = useAuth();
+  const { login, signup, loginWithGoogle, currentUser, userRole } = useAuth();
   const navigate = useNavigate();
 
   // Watch for authenticated state to redirect automatically
@@ -79,7 +79,6 @@ export default function Auth() {
         <div className="surface-container-lowest glass-panel rounded-xl shadow-[0_40px_80px_rgba(25,28,30,0.06)] p-10 md:p-12 border border-white/40">
           <h2 className="font-headline font-bold text-2xl mb-8 tracking-tight">{isSignUp ? 'Create Workspace' : 'Welcome back'}</h2>
           
-          {authError && <div className="p-3 mb-6 bg-error/10 text-error text-sm rounded-lg border border-error/20 font-medium">{authError}</div>}
           {error && <div className="p-3 mb-6 bg-error/10 text-error text-sm rounded-lg border border-error/20 font-medium">{error}</div>}
 
           {/* Role Selector (Applies to both Google Auth and Email Auth) */}
@@ -100,7 +99,7 @@ export default function Auth() {
           {/* Social Provider */}
           <button 
             onClick={handleGoogleAuth}
-            disabled={loading || !!authError}
+            disabled={loading}
             className="w-full flex items-center justify-center gap-3 bg-surface-container-lowest hover:bg-surface-container-low border border-outline-variant/30 py-4 rounded-full transition-all duration-300 shadow-sm active:scale-[0.98] disabled:opacity-50">
             <svg height="20" viewBox="0 0 24 24" width="20" xmlns="http://www.w3.org/2000/svg">
               <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"></path>
@@ -164,7 +163,7 @@ export default function Auth() {
             
             {/* Submit Action */}
             <button 
-              disabled={loading || !!authError}
+              disabled={loading}
               type="submit" 
               className="block w-full text-center primary-gradient text-white font-bold py-5 rounded-full shadow-[0_12px_32px_rgba(53,37,205,0.2)] hover:shadow-[0_16px_40px_rgba(53,37,205,0.3)] transition-all duration-300 active:scale-95 mt-4 disabled:opacity-50 flex items-center justify-center gap-2">
               {loading && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>}
