@@ -1,202 +1,269 @@
-# =============================================================
-# NeuroClass — Supabase + LangChain + LangGraph AI Training
-# Google Colab Ready
-# =============================================================
-# SETUP: In Colab, go to Secrets (key icon) and add:
-#   SUPABASE_URL          = https://tvizwaysproajwebglwv.supabase.co
-#   SUPABASE_SERVICE_KEY  = <your service role key from Supabase dashboard>
-#   OPENAI_API_KEY        = <your OpenAI key>  (or use Gemini — see below)
-# =============================================================
+# NeuroClass — Supabase + LangChain + LangGraph (Google Colab Ready)
+# ================================================================
+# This script connects to your NeuroClass Supabase project,
+# loads student queries and course files, builds a vector store,
+# and runs a LangGraph agent that stores every Q&A back to Supabase.
+#
+# HOW TO USE IN GOOGLE COLAB:
+#   1. Go to Colab → Secrets (key icon on left)
+#   2. Add: SUPABASE_URL, SUPABASE_SERVICE_KEY, OPENAI_API_KEY
+#   3. Run cells top to bottom
+# ================================================================
 
-# ── CELL 1: Install dependencies ────────────────────────────
-# !pip install -q supabase langchain langchain-community langgraph openai pypdf faiss-cpu python-dotenv
+# ──────────────────────────────────────────────────────────────────
+# CELL 1 — Install dependencies
+# ──────────────────────────────────────────────────────────────────
+# !pip install -q supabase langchain langchain-community langgraph \
+#              langchain-openai openai pypdf faiss-cpu python-dotenv
 
-# ── CELL 2: Connect to Supabase ─────────────────────────────
+# ──────────────────────────────────────────────────────────────────
+# CELL 2 — Environment & Supabase connection
+# ──────────────────────────────────────────────────────────────────
 import os
+import io
+import uuid
 from supabase import create_client, Client
 
-# Load from Colab Secrets
+# --- Load secrets (works in Colab with Secrets, or .env locally) ---
 try:
     from google.colab import userdata
-    os.environ["SUPABASE_URL"]         = userdata.get("SUPABASE_URL")
-    os.environ["SUPABASE_SERVICE_KEY"] = userdata.get("SUPABASE_SERVICE_KEY")
-    os.environ["OPENAI_API_KEY"]       = userdata.get("OPENAI_API_KEY")
-except Exception:
-    pass  # running locally — set env vars manually
+    SUPABASE_URL        = userdata.get('SUPABASE_URL')
+    SUPABASE_SERVICE_KEY = userdata.get('SUPABASE_SERVICE_KEY')
+    OPENAI_API_KEY      = userdata.get('OPENAI_API_KEY')
+except ImportError:
+    from dotenv import load_dotenv
+    load_dotenv()
+    SUPABASE_URL        = os.environ['SUPABASE_URL']
+    SUPABASE_SERVICE_KEY = os.environ['SUPABASE_SERVICE_ROLE_KEY']
+    OPENAI_API_KEY      = os.environ['OPENAI_API_KEY']
 
-SUPABASE_URL         = os.environ["SUPABASE_URL"]
-SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
-
+# Service-role client — bypasses RLS, full read access for AI training
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-print("✅ Connected to Supabase:", SUPABASE_URL)
+print('Connected to Supabase:', SUPABASE_URL)
 
-# ── CELL 3: Fetch student queries ───────────────────────────
-def fetch_all_queries(course_id: str = None, limit: int = 2000):
-    """
-    Fetch student queries from Supabase for AI training.
-    Uses service role key — bypasses RLS to get ALL queries.
-    Columns: id, student_id, course_id, query_text, ai_reply,
-             context, thread_id, provider, query_type, created_at
-    """
-    q = (
-        supabase.table("student_queries")
-        .select("id, student_id, course_id, query_text, ai_reply, context, thread_id, provider, query_type, created_at")
-        .order("created_at", desc=False)
+# ──────────────────────────────────────────────────────────────────
+# CELL 3 — Fetch student queries (uses the v_training_queries view)
+# ──────────────────────────────────────────────────────────────────
+def fetch_training_queries(limit: int = 5000) -> list[dict]:
+    """Fetch all student queries from Supabase for AI training."""
+    res = (
+        supabase.table('v_training_queries')
+        .select('id, query_text, ai_reply, response_text, query_type, context, session_id, course_title, student_name, created_at')
+        .order('created_at', desc=False)
         .limit(limit)
+        .execute()
     )
-    if course_id:
-        q = q.eq("course_id", course_id)
-    return q.execute().data
+    return res.data
 
-queries = fetch_all_queries()
-print(f"📚 Fetched {len(queries)} student queries")
+queries = fetch_training_queries()
+print(f'Fetched {len(queries)} student queries for training')
 
-# ── CELL 4: Fetch uploaded file metadata ────────────────────
-def fetch_files_metadata(course_id: str = None, file_type: str = None):
-    """
-    Fetch metadata for all uploaded files.
-    Use storage_bucket + storage_path to download actual files.
-    Columns: id, file_name, file_type, storage_bucket, storage_path,
-             course_id, is_public, metadata, created_at
-    """
+# ──────────────────────────────────────────────────────────────────
+# CELL 4 — Fetch file inventory (v_file_inventory view)
+# ──────────────────────────────────────────────────────────────────
+def fetch_file_inventory(course_id: str = None) -> list[dict]:
+    """Get all uploaded files metadata."""
     q = (
-        supabase.table("uploaded_files")
-        .select("id, file_name, file_type, storage_bucket, storage_path, course_id, is_public, metadata, created_at")
-        .order("created_at", desc=False)
+        supabase.table('v_file_inventory')
+        .select('id, file_name, file_type, category, storage_bucket, storage_path, course_title, is_public, created_at')
     )
     if course_id:
-        q = q.eq("course_id", course_id)
-    if file_type:
-        q = q.eq("file_type", file_type)
+        q = q.eq('course_id', course_id)
     return q.execute().data
 
-files = fetch_files_metadata()
-print(f"📁 Fetched {len(files)} file records")
+files = fetch_file_inventory()
+print(f'Found {len(files)} files in the inventory')
+for f in files[:10]:
+    print(f'  [{f["file_type"]}] {f["file_name"]} — Course: {f["course_title"]}')
 
-# ── CELL 5: Download a file from Supabase Storage ───────────
-def download_file(storage_bucket: str, storage_path: str) -> bytes:
-    """Download raw bytes of any file from Supabase Storage."""
+# ──────────────────────────────────────────────────────────────────
+# CELL 5 — Download a file from Supabase Storage
+# ──────────────────────────────────────────────────────────────────
+def download_file_bytes(storage_bucket: str, storage_path: str) -> bytes:
+    """Download raw bytes from Supabase Storage (service-role, bypasses RLS)."""
     return supabase.storage.from_(storage_bucket).download(storage_path)
 
-# ── CELL 6: LangChain Document Loader from Supabase Storage ─
+# ──────────────────────────────────────────────────────────────────
+# CELL 6 — Load PDFs as LangChain Documents
+# ──────────────────────────────────────────────────────────────────
 from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-import io
+from pypdf import PdfReader
 
-def load_pdf_from_supabase(file_record: dict) -> list:
-    """Download a PDF from Supabase Storage and return LangChain Documents."""
+def load_pdf_document(file_record: dict) -> list[Document]:
+    """Download a PDF from storage and return LangChain Documents."""
     try:
-        from pypdf import PdfReader
-        raw    = download_file(file_record["storage_bucket"], file_record["storage_path"])
+        raw   = download_file_bytes(file_record['storage_bucket'], file_record['storage_path'])
         reader = PdfReader(io.BytesIO(raw))
-        text   = "\n".join(p.extract_text() or "" for p in reader.pages)
+        text  = '\n'.join(page.extract_text() or '' for page in reader.pages)
         return [Document(
             page_content=text,
             metadata={
-                "source":    file_record["file_name"],
-                "course_id": file_record["course_id"],
-                "file_id":   file_record["id"],
+                'source':    file_record['file_name'],
+                'course':    file_record.get('course_title', ''),
+                'file_id':   file_record['id'],
+                'file_type': file_record['file_type'],
             }
         )]
     except Exception as e:
-        print(f"⚠️  Could not load {file_record['file_name']}: {e}")
+        print(f'  Warning: Could not load {file_record["file_name"]}: {e}')
         return []
 
-# Load all PDFs as LangChain documents (limit to 5 for demo)
-pdf_files = [f for f in files if f["file_type"] in ("pdf", "document")]
-all_docs  = []
-for f in pdf_files[:5]:
-    all_docs.extend(load_pdf_from_supabase(f))
-print(f"📄 Loaded {len(all_docs)} document pages")
+all_docs = []
+pdf_files = [f for f in files if f['file_type'] in ('pdf', 'document')]
+print(f'Loading {len(pdf_files)} PDF/document files...')
+for f in pdf_files:
+    all_docs.extend(load_pdf_document(f))
+print(f'Loaded {len(all_docs)} LangChain documents')
 
-# ── CELL 7: Build FAISS Vector Store ────────────────────────
+# ──────────────────────────────────────────────────────────────────
+# CELL 7 — Also load query history as documents (for fine-tuning context)
+# ──────────────────────────────────────────────────────────────────
+def queries_to_documents(queries: list[dict]) -> list[Document]:
+    """Convert Q&A pairs into LangChain Documents for RAG context."""
+    docs = []
+    for q in queries:
+        if not q.get('query_text'):
+            continue
+        answer = q.get('ai_reply') or q.get('response_text') or ''
+        content = f"Q: {q['query_text']}\nA: {answer}" if answer else f"Q: {q['query_text']}"
+        docs.append(Document(
+            page_content=content,
+            metadata={
+                'source':     'student_query',
+                'course':     q.get('course_title', ''),
+                'query_type': q.get('query_type', 'general'),
+                'created_at': str(q.get('created_at', '')),
+            }
+        ))
+    return docs
+
+qa_docs  = queries_to_documents(queries)
+all_docs += qa_docs
+print(f'Total documents for RAG: {len(all_docs)} ({len(qa_docs)} from query history)')
+
+# ──────────────────────────────────────────────────────────────────
+# CELL 8 — Build FAISS Vector Store
+# ──────────────────────────────────────────────────────────────────
+from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import OpenAIEmbeddings
 
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
+chunks   = splitter.split_documents(all_docs)
 
-splitter    = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-chunks      = splitter.split_documents(all_docs)
-embeddings  = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
-vectorstore = FAISS.from_documents(chunks, embeddings)
-retriever   = vectorstore.as_retriever(search_kwargs={"k": 5})
-print(f"🔍 Vector store built with {len(chunks)} chunks")
+embeddings   = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+vectorstore  = FAISS.from_documents(chunks, embeddings)
+retriever    = vectorstore.as_retriever(search_type='mmr', search_kwargs={'k': 5, 'fetch_k': 20})
+print(f'Vector store built — {len(chunks)} chunks indexed')
 
-# ── CELL 8: LangGraph Agent (RAG + auto query logging) ──────
-from langgraph.graph import StateGraph, END
-from langchain_community.chat_models import ChatOpenAI
-from langchain.chains import RetrievalQA
+# Optional: save locally for reuse
+vectorstore.save_local('neuroclass_faiss_index')
+print('Vector store saved to neuroclass_faiss_index/')
+
+# ──────────────────────────────────────────────────────────────────
+# CELL 9 — LangGraph Agent (RAG + auto-save Q&A to Supabase)
+# ──────────────────────────────────────────────────────────────────
 from typing import TypedDict, Optional
-import uuid
+from langgraph.graph import StateGraph, END
+from langchain_openai import ChatOpenAI
+from langchain.chains import RetrievalQA
 
-llm      = ChatOpenAI(model="gpt-4o-mini", openai_api_key=OPENAI_API_KEY)
-qa_chain = RetrievalQA.from_chain_type(llm=llm, retriever=retriever)
+llm      = ChatOpenAI(model='gpt-4o-mini', openai_api_key=OPENAI_API_KEY, temperature=0.2)
+qa_chain = RetrievalQA.from_chain_type(
+    llm=llm,
+    chain_type='stuff',
+    retriever=retriever,
+    return_source_documents=True,
+)
 
 class AgentState(TypedDict):
     query:      str
     student_id: Optional[str]
     course_id:  Optional[str]
     session_id: str
-    response:   Optional[str]
+    query_type: str
     db_id:      Optional[str]
+    response:   Optional[str]
+    sources:    Optional[list]
 
-def save_query_node(state: AgentState) -> AgentState:
-    """Node 1: Save incoming query to student_queries table."""
-    result = supabase.table("student_queries").insert({
-        "student_id": state.get("student_id"),
-        "course_id":  state.get("course_id"),
-        "query_text": state["query"],
-        "thread_id":  state["session_id"],
-        "provider":   "openai",
-        "query_type": "rag",
+def node_save_query(state: AgentState) -> AgentState:
+    """Save the incoming query to Supabase before answering."""
+    res = supabase.table('student_queries').insert({
+        'student_id': state.get('student_id'),
+        'course_id':  state.get('course_id'),
+        'query_text': state['query'],
+        'session_id': state['session_id'],
+        'query_type': state.get('query_type', 'rag'),
+        'provider':   'langchain',
     }).execute()
-    state["db_id"] = result.data[0]["id"]
+    state['db_id'] = res.data[0]['id'] if res.data else None
     return state
 
-def retrieve_and_answer_node(state: AgentState) -> AgentState:
-    """Node 2: RAG — retrieve from vector store and generate answer."""
-    response       = qa_chain.invoke(state["query"])
-    state["response"] = response["result"]
+def node_rag_answer(state: AgentState) -> AgentState:
+    """Retrieve relevant context and generate an answer."""
+    result = qa_chain.invoke({'query': state['query']})
+    state['response'] = result['result']
+    state['sources']  = [
+        doc.metadata.get('source', 'unknown')
+        for doc in result.get('source_documents', [])
+    ]
     return state
 
-def save_response_node(state: AgentState) -> AgentState:
-    """Node 3: Write AI reply back to the same DB row."""
-    if state.get("db_id"):
-        supabase.table("student_queries") \
-            .update({"ai_reply": state["response"]}) \
-            .eq("id", state["db_id"]) \
-            .execute()
+def node_save_response(state: AgentState) -> AgentState:
+    """Persist the AI response back to Supabase."""
+    if state.get('db_id') and state.get('response'):
+        supabase.table('student_queries').update({
+            'ai_reply':      state['response'],
+            'response_text': state['response'],
+        }).eq('id', state['db_id']).execute()
     return state
 
-# Build the LangGraph pipeline
+# Build the graph
 graph = StateGraph(AgentState)
-graph.add_node("save_query",   save_query_node)
-graph.add_node("answer",       retrieve_and_answer_node)
-graph.add_node("save_response", save_response_node)
-
-graph.set_entry_point("save_query")
-graph.add_edge("save_query",   "answer")
-graph.add_edge("answer",        "save_response")
-graph.add_edge("save_response", END)
-
+graph.add_node('save_query',    node_save_query)
+graph.add_node('rag_answer',    node_rag_answer)
+graph.add_node('save_response', node_save_response)
+graph.set_entry_point('save_query')
+graph.add_edge('save_query',    'rag_answer')
+graph.add_edge('rag_answer',    'save_response')
+graph.add_edge('save_response', END)
 agent = graph.compile()
-print("🤖 LangGraph agent compiled!")
+print('LangGraph agent compiled and ready')
 
-# ── CELL 9: Run the Agent ────────────────────────────────────
-result = agent.invoke({
-    "query":      "What is the main topic covered in the uploaded course material?",
-    "student_id": None,   # replace with real auth.users UUID
-    "course_id":  None,   # replace with real courses UUID
-    "session_id": str(uuid.uuid4()),
-    "response":   None,
-    "db_id":      None,
-})
-print("🎯 Answer:", result["response"])
+# ──────────────────────────────────────────────────────────────────
+# CELL 10 — Run the agent
+# ──────────────────────────────────────────────────────────────────
+def ask(question: str, course_id: str = None, student_id: str = None) -> str:
+    """Ask a question and get an answer grounded in course materials."""
+    result = agent.invoke({
+        'query':      question,
+        'student_id': student_id,
+        'course_id':  course_id,
+        'session_id': str(uuid.uuid4()),
+        'query_type': 'rag',
+        'db_id':      None,
+        'response':   None,
+        'sources':    None,
+    })
+    print(f'Q: {question}')
+    print(f'A: {result["response"]}')
+    if result.get('sources'):
+        print(f'Sources: {", ".join(set(result["sources"]))}')
+    return result['response']
 
-# ── CELL 10: Export queries as CSV for offline training ──────
+# Example usage:
+# answer = ask('What topics are covered in this course?')
+# answer = ask('Explain neural networks', course_id='your-course-uuid')
+
+# ──────────────────────────────────────────────────────────────────
+# CELL 11 — Export training data as CSV
+# ──────────────────────────────────────────────────────────────────
 import pandas as pd
 
-df = pd.DataFrame(fetch_all_queries())
-df.to_csv("neuroclass_queries_export.csv", index=False)
-print(f"💾 Exported {len(df)} rows to neuroclass_queries_export.csv")
-print(df[["query_text", "ai_reply", "provider", "created_at"]].head(10))
+df = pd.DataFrame(queries)
+if not df.empty:
+    df.to_csv('neuroclass_training_data.csv', index=False)
+    print(f'Exported {len(df)} rows to neuroclass_training_data.csv')
+    print(df[['query_text', 'ai_reply', 'course_title']].head(10))
+else:
+    print('No queries to export yet — start using the app!')
