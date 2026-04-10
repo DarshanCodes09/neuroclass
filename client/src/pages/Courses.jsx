@@ -37,6 +37,17 @@ export default function Courses() {
     };
   }, [currentUser, userRole]);
 
+  const handleDeleteCourse = async (courseId, e) => {
+    e.stopPropagation();
+    if (!window.confirm("Are you sure you want to permanently delete this course?")) return;
+    try {
+      await aiService.deleteCourse(courseId);
+      setCourses(courses.filter(c => c.id !== courseId));
+    } catch (err) {
+      alert("Failed to delete course: " + err.message);
+    }
+  };
+
   return (
     <div className="px-12 py-10 max-w-screen-2xl mx-auto w-full">
       <div className="mb-12">
@@ -104,8 +115,15 @@ export default function Courses() {
                   </div>
                 </div>
                 
-                <div className="mt-8 pt-4 border-t border-outline-variant/10 text-center">
+                <div className="mt-8 pt-4 border-t border-outline-variant/10 text-center flex flex-col gap-2">
                   <span className="text-xs font-bold font-headline uppercase tracking-widest text-primary group-hover:text-indigo-600 transition-colors">Enter Environment &rarr;</span>
+                  {userRole === 'Instructor' && (
+                    <button 
+                      onClick={(e) => handleDeleteCourse(course.id, e)}
+                      className="text-xs font-bold uppercase tracking-widest text-error opacity-60 hover:opacity-100 hover:text-red-600 transition-colors mt-2">
+                      Delete Course
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

@@ -13,6 +13,7 @@ const {
   listSubmissions,
   reviewSubmission,
   listGrades,
+  deleteAssignment,
 } = require('../controllers/lms.controller');
 
 const router = express.Router();
@@ -25,6 +26,7 @@ router.post('/courses/:courseId/announcements', postAnnouncement);
 router.get('/assignments', listAssignments);
 router.post('/assignments', createAssignment);
 router.post('/assignments/upload', upload.single('file'), uploadAssignmentAttachment);
+router.delete('/assignments/:assignmentId', deleteAssignment);
 
 router.get('/submissions', listSubmissions);
 router.post('/submissions', createSubmission);

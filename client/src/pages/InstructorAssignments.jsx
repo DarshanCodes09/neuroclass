@@ -93,6 +93,16 @@ export default function InstructorAssignments({ courseIdFilter }) {
     }
   };
 
+  const handleDeleteAssignment = async (assignmentId) => {
+    if (!window.confirm("Are you sure you want to delete this assignment?")) return;
+    try {
+      await aiService.deleteAssignment(assignmentId);
+      setAssignments(assignments.filter(a => a.id !== assignmentId));
+    } catch (err) {
+      alert("Failed to delete assignment: " + err.message);
+    }
+  };
+
   return (
     <div className={`px-4 md:px-12 ${courseIdFilter ? 'py-4' : 'py-10 max-w-screen-2xl mx-auto'}`}>
       {!courseIdFilter && (
@@ -250,7 +260,14 @@ export default function InstructorAssignments({ courseIdFilter }) {
             
             <div className="pt-4 border-t border-outline-variant/10 flex justify-between items-center text-sm font-semibold">
               <span className="text-outline">Max Score: {assn.maxScore}</span>
-              <button className="text-primary hover:text-indigo-600 transition-colors">Edit</button>
+              <div className="flex gap-4 items-center">
+                <button 
+                  onClick={() => handleDeleteAssignment(assn.id)}
+                  className="text-error opacity-70 hover:opacity-100 hover:text-red-600 transition-colors uppercase text-[10px] tracking-widest font-bold">
+                  Delete
+                </button>
+                <button className="text-primary hover:text-indigo-600 transition-colors">Edit</button>
+              </div>
             </div>
           </div>
         )})}

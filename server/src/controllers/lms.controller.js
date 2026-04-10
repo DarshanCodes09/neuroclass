@@ -216,14 +216,33 @@ async function createSubmission(req, res) {
 
 async function listSubmissions(req, res) {
   const { studentId, instructorId, status } = req.query;
-  let query = sb().from('submissions').select('*');
+  let query = sb().from('submissions').select('*, profiles!student_id(full_name)');
   if (studentId) query = query.eq('student_id', studentId);
   if (instructorId) query = query.eq('instructor_id', instructorId);
   if (status) query = query.eq('status', status);
   query = query.order('submitted_at', { ascending: false });
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
-  return res.json({ submissions: data || [] });
+  
+  const mappedSubmissions = (data || []).map(s => ({
+    id: s.id,
+    assignmentId: s.assignment_id,
+    courseId: s.course_id,
+    instructorId: s.instructor_id,
+    studentId: s.student_id,
+    studentName: s.profiles?.full_name || s.student_name || 'Student',
+    fileUrl: s.file_url,
+    storagePath: s.storage_path,
+    fileName: s.file_name,
+    status: s.status,
+    aiScore: s.ai_score,
+    aiFeedback: s.ai_feedback,
+    submittedAt: s.submitted_at,
+    maxScore: s.max_score,
+    finalScore: s.final_score,
+    instructorFeedback: s.instructor_feedback
+  }));
+  return res.json({ submissions: mappedSubmissions });
 }
 
 async function reviewSubmission(req, res) {
@@ -251,7 +270,37 @@ async function listGrades(req, res) {
     .in('status', ['approved', 'overridden'])
     .order('submitted_at', { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
-  return res.json({ grades: data || [] });
+  
+  const mappedSubmissions = (data || []).map(s => ({
+    id: s.id,
+    assignmentId: s.assignment_id,
+    courseId: s.course_id,
+    instructorId: s.instructor_id,
+    studentId: s.student_id,
+    studentName: s.student_name || 'Student',
+    fileUrl: s.file_url,
+    storagePath: s.storage_path,
+    fileName: s.file_name,
+    status: s.status,
+    aiScore: s.ai_score,
+    aiFeedback: s.ai_feedback,
+    submittedAt: s.submitted_at,
+    maxScore: s.max_score,
+    finalScore: s.final_score,
+    instructorFeedback: s.instructor_feedback
+  }));
+  return res.json({ grades: mappedSubmissions });
+}
+
+async function deleteAssignment(req, res) {
+  try {
+    const { error } = await sb().from('assignments').delete().eq('id', req.params.assignmentId);
+    if (error) throw error;
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('[lms] deleteAssignment error:', err);
+    return res.status(500).json({ error: 'Failed to delete assignment.' });
+  }
 }
 
 module.exports = {
@@ -267,4 +316,5 @@ module.exports = {
   listSubmissions,
   reviewSubmission,
   listGrades,
+  deleteAssignment,
 };

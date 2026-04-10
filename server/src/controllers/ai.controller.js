@@ -196,7 +196,19 @@ const evaluate = async (req, res) => {
         try { evaluationData = JSON.parse(outputText.replace(/```json/g, '').replace(/```/g, '').trim()); }
         catch (_) { evaluationData = { score: 0, feedback: outputText }; }
       } catch (_) {
-        evaluationData = { score: Math.round(Number(maxScore) * 0.75), feedback: 'Offline/mock grading. Pending manual review.' };
+        // Dynamic mock grading based on submission length to simulate varied markings securely
+        let mockScore = 50;
+        if (answerText.length > 0) {
+          const pseudoRandom = answerText.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+          const variation = pseudoRandom % 40; // 0 to 39
+          mockScore = 60 + variation; // 60 to 99
+        }
+        const calculatedMockScore = Math.max(0, Math.min(Number(maxScore), Math.round((mockScore / 100) * Number(maxScore))));
+        
+        evaluationData = { 
+          score: calculatedMockScore, 
+          feedback: `Offline mock grading (AI provider unreachable or out of credits). Simulated score based on submission content. Pending manual review.` 
+        };
       }
     }
 
@@ -204,8 +216,10 @@ const evaluate = async (req, res) => {
 
     return res.json({ score: Number(evaluationData.score || 0), feedback: evaluationData.feedback || 'No feedback generated.', model: scoredBySimilarity ? 'similarity' : getProvider() });
   } catch (error) {
+    const fs = require('fs');
+    fs.writeFileSync('last_ai_error.log', error.stack || String(error));
     console.error('[ai] evaluate error:', error);
-    return res.status(500).json({ error: 'Failed to evaluate submission' });
+    return res.status(500).json({ error: 'Failed to evaluate submission: ' + error.message });
   }
 };
 

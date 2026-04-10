@@ -80,6 +80,18 @@ export const aiService = {
     return request(`${API_BASE_URL}/lms/assignments?${qs.toString()}`);
   },
 
+  async deleteCourse(courseId) {
+    return request(`${API_BASE_URL}/courses/${courseId}`, {
+      method: 'DELETE',
+    });
+  },
+
+  async deleteAssignment(assignmentId) {
+    return request(`${API_BASE_URL}/lms/assignments/${assignmentId}`, {
+      method: 'DELETE',
+    });
+  },
+
   async createAssignment(payload) {
     return request(`${API_BASE_URL}/lms/assignments`, {
       method: 'POST',
@@ -187,7 +199,7 @@ export const aiService = {
   },
 
   async evaluateSubmission(payload) {
-    return request(`${API_BASE_URL}/evaluate`, {
+    return request(`${API_BASE_URL}/ai/evaluate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -202,7 +214,7 @@ export const aiService = {
   },
 
   async chatWithTutor(message, courseId, history = []) {
-    const data = await request(`${API_BASE_URL}/chat`, {
+    const data = await request(`${API_BASE_URL}/ai/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message, courseId, history }),

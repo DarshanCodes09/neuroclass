@@ -27,8 +27,8 @@ router.post('/upload', upload.single('file'), async (req, res) => {
   try {
     const {
       courseId,
-      fileType     = 'document',
-      isPublic     = 'false',
+      fileType = 'document',
+      isPublic = 'false',
       isInstructor = 'false',  // 'true' = teacher, 'false' = student
       uploaderName = '',
     } = req.body;
@@ -42,18 +42,18 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       if (user) uploaderId = user.id;
     }
 
-    if (!req.file)   return res.status(400).json({ error: 'No file provided.' });
-    if (!courseId)   return res.status(400).json({ error: 'courseId is required.' });
+    if (!req.file) return res.status(400).json({ error: 'No file provided.' });
+    if (!courseId) return res.status(400).json({ error: 'courseId is required.' });
 
     const isTeacher = isInstructor === 'true';
-    const bucket    = resolveBucket(fileType, isTeacher);
+    const bucket = resolveBucket(fileType, isTeacher);
 
     // Build systematic storage path
     // Teacher:  {courseId}/teacher/{ts}_{name}
     // Student:  {courseId}/students/{studentId}/{ts}_{name}
     const safeName = req.file.originalname.replace(/[^a-zA-Z0-9._\-]/g, '_');
-    const ts       = Date.now();
-    const folder   = isTeacher
+    const ts = Date.now();
+    const folder = isTeacher
       ? 'teacher'
       : `students/${uploaderId || 'unknown'}`;
     const storagePath = `${courseId}/${folder}/${ts}_${safeName}`;
@@ -71,17 +71,17 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     const { data: fileRecord, error: dbError } = await supabase
       .from('uploaded_files')
       .insert({
-        course_id:      courseId,
-        uploader_id:    uploaderId,
-        uploader_role:  isTeacher ? 'INSTRUCTOR' : 'STUDENT',
-        uploader_name:  uploaderName,
-        file_name:      req.file.originalname,
-        file_type:      fileType,
+        course_id: courseId,
+        uploader_id: uploaderId,
+        uploader_role: isTeacher ? 'INSTRUCTOR' : 'STUDENT',
+        uploader_name: uploaderName,
+        file_name: req.file.originalname,
+        file_type: fileType,
         storage_bucket: bucket,
-        storage_path:   storagePath,
+        storage_path: storagePath,
         file_size_bytes: req.file.size,
-        is_public:      isPublic === 'true',
-        metadata:       { mimetype: req.file.mimetype },
+        is_public: isPublic === 'true',
+        metadata: { mimetype: req.file.mimetype },
       })
       .select()
       .single();
@@ -106,7 +106,7 @@ router.get('/course/:courseId', async (req, res) => {
     .eq('course_id', courseId)
     .order('created_at', { ascending: false });
 
-  if (role)     query = query.eq('uploader_role', role.toUpperCase());
+  if (role) query = query.eq('uploader_role', role.toUpperCase());
   if (fileType) query = query.eq('file_type', fileType);
 
   const { data, error } = await query;
@@ -114,7 +114,7 @@ router.get('/course/:courseId', async (req, res) => {
 
   // Optionally group into teacher / students sections
   const grouped = {
-    teacher:  data.filter(f => f.uploader_role === 'INSTRUCTOR'),
+    teacher: data.filter(f => f.uploader_role === 'INSTRUCTOR'),
     students: data.filter(f => f.uploader_role === 'STUDENT'),
   };
   res.json({ raw: data, grouped });
@@ -122,8 +122,8 @@ router.get('/course/:courseId', async (req, res) => {
 
 // ─── GET /api/files/download/:fileId ──────────────────────────────────────
 router.get('/download/:fileId', async (req, res) => {
-  const { fileId }   = req.params;
-  const expiresIn    = parseInt(req.query.expiresIn || '3600', 10);
+  const { fileId } = req.params;
+  const expiresIn = parseInt(req.query.expiresIn || '3600', 10);
 
   const { data: file, error: fetchErr } = await supabase
     .from('uploaded_files')
