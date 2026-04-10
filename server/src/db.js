@@ -1,11 +1,22 @@
 // server/src/db.js
 // Single source of truth for the Supabase admin client.
-// Both legacy code (getAdmin) and new code (require('./supabase')) work.
-const supabase = require('./supabase');
+// getAdmin() MUST return the service-role client (supabaseAdmin) so that
+// server-side operations bypass Row Level Security.
+// The anon client (supabase) is only for auth-gated, user-context operations.
 
-/** Returns the shared Supabase service-role client */
+const { supabaseAdmin } = require('./supabase');
+
+/**
+ * Returns the Supabase service-role client.
+ * This bypasses RLS — only use in trusted server-side code, NEVER in the frontend.
+ */
 function getAdmin() {
-  return supabase;
+  if (!supabaseAdmin) {
+    throw new Error(
+      '[db] supabaseAdmin is null. Set SUPABASE_SERVICE_ROLE_KEY in your environment variables.'
+    );
+  }
+  return supabaseAdmin;
 }
 
 module.exports = { getAdmin };
