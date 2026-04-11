@@ -5,6 +5,16 @@
 
 **NeuroClass** is a next-generation Learning Management System (LMS) designed to bridge the gap between student engagement and rigorous academic integrity. By integrating specialized AI personas and forensic evaluation logic, NeuroClass ensures that students are guided Socrates-style and graded with the precision of a trained professor.
 
+## 🏗️ Architecture Overview
+
+**Frontend (React + Vite)**  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↓  
+**Backend API (Node.js + Express)**  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↓  
+**AI Engine (Groq + Gemini)**  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↓  
+**Vector DB + PostgreSQL (Supabase)**
+
 ---
 
 ## 🚀 Key Features
