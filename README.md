@@ -1,108 +1,109 @@
-# NeuroClass
+# 🧠 NeuroClass: AI-Powered Learning & Forensic Evaluation
 
-AI-powered Learning Management System with Supabase backend.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/DarshanCodes09/neuroclass)
 
-## Storage Structure
+**NeuroClass** is a next-generation Learning Management System (LMS) designed to bridge the gap between student engagement and rigorous academic integrity. By integrating specialized AI personas and forensic evaluation logic, NeuroClass ensures that students are guided Socrates-style and graded with the precision of a trained professor.
 
-```
-📦 Supabase Storage Buckets
-│
-├── 🗂️ course-materials        (Teacher uploads — PDFs, slides, docs)
-│     └── {courseId}/
-│           └── teacher/
-│                 └── {timestamp}_{filename}
-│
-├── 🎬 course-videos           (Teacher video lectures)
-│     └── {courseId}/
-│           └── teacher/
-│                 └── {timestamp}_{filename}
-│
-├── 📝 student-submissions     (Student assignment uploads)
-│     └── {courseId}/
-│           └── students/
-│                 └── {studentId}/
-│                       └── {timestamp}_{filename}
-│
-└── 🖼️ profile-avatars         (Public profile pictures)
-      └── {userId}_{timestamp}.jpg
-```
+---
 
-## Database Tables
+## 🚀 Key Features
 
-| Table | Purpose |
-|---|---|
-| `profiles` | User info (auto-created on signup via trigger) |
-| `courses` | Course metadata |
-| `uploaded_files` | Tracks every file in storage with `uploader_role` (INSTRUCTOR / STUDENT) |
-| `student_queries` | Every text query sent by students — used for AI training |
-| `enrollments` | Which students are in which courses |
+### 1. ⚖️ 100% AI-Driven Forensic Evaluator
+Powered by **Groq (Llama 3.3 70B)**, our evaluation engine goes beyond simple grading.
+- **Relevancy Gate**: Automatically detects off-topic or "Hallucinated" answers and applies a zero-tolerance policy.
+- **Gap Analysis**: Identifies exactly what concepts are missing from a student's answer based on the instructor's rubric.
+- **Evidence-Based Grades**: Forced to quote the student's work to justify every point awarded or deducted.
 
-## Setup
+### 2. 🕵️ Vector-Based Plagiarism Detection
+Built-in peer-to-peer similarity checks.
+- Calculates **Cosine Similarity** between submissions within the same assignment.
+- Flags suspicious overlaps to instructors before final scores are published.
 
-### 1. Server
+### 3. 🎓 Socratic AI Tutor
+A dedicated chat assistant for students.
+- **Non-Directive Support**: Guides students toward the answer using hints and logic instead of giving away solutions.
+- **Course Context**: Uses course-specific materials (PDFs, uploads) to provide relevant guidance.
+
+### 4. 🏆 Dynamic Leaderboard & Analytics
+- **Live Rankings**: Automatic student spotlight for Top 3 performers (Gold, Silver, Bronze badges).
+- **Course Specificity**: Filter rankings by subject or view global performance.
+
+### 5. 🛠️ Instructor Training Suite
+Instructors can fine-tune the AI by:
+- Uploading custom **Rubrics**.
+- Providing **Gold Standard Samples** (High/Medium/Low quality) for few-shot learning accuracy.
+
+---
+
+## 🛠️ Technology Stack
+
+| Layer | Technology |
+| :--- | :--- |
+| **Frontend** | React (Vite), Tailwind CSS, Lucide React, Firebase Auth |
+| **Backend** | Node.js, Express, Multer, PDF-Parse, Mammoth |
+| **Database** | Supabase (PostgreSQL) |
+| **AI Engine** | Groq (Llama 3.1 & 3.3), Google Gemini |
+| **Styling** | Vanilla CSS (Modern Aesthetics), Glassmorphism |
+
+---
+
+## ⚙️ Installation & Setup
+
+### 1. Clone the Repository
 ```bash
-cd server
-cp .env.example .env   # fill in SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY
-npm install
-npm start
+git clone https://github.com/DarshanCodes09/neuroclass.git
+cd neuroclass
 ```
 
-### 2. Client
+### 2. Environment Configuration
+Create a `.env` file in both `client` and `server` folders.
+
+**Server (.env):**
+```env
+PORT=8000
+SUPABASE_URL=your_supabase_url
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+GROQ_API_KEY=your_groq_key
+```
+
+**Client (.env):**
+```env
+VITE_SUPABASE_URL=your_supabase_url
+VITE_SUPABASE_ANON_KEY=your_anon_key
+VITE_AI_BACKEND_URL=http://localhost:8000/api
+```
+
+### 3. Install Dependencies
 ```bash
-cd client
-npm install
-npm start
+# From the root directory
+npm run install:all
 ```
 
-### 3. Supabase
-- Run `database/schema.sql` in Supabase → SQL Editor
-- Verify 4 buckets exist in Storage: `course-materials`, `course-videos`, `student-submissions`, `profile-avatars`
+### 4. Start Development Servers
+```bash
+# Start Backend (Port 8000)
+npm run dev:server
 
-### 4. Google Colab (AI Training)
-```
-notebooks/supabase_langchain.py
-```
-Set these in Colab Secrets (Tools → Secrets):
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_KEY`
-- `OPENAI_API_KEY`
-
-## API Endpoints
-
-### File Upload
-```
-POST /api/files/upload
-Content-Type: multipart/form-data
-Authorization: Bearer <jwt>
-
-Fields:
-  file         — the file
-  courseId     — UUID of the course
-  fileType     — document | video | submission | image
-  isInstructor — true (teacher) | false (student)
-  uploaderName — display name
-  isPublic     — true | false
+# Start Frontend (Vite)
+npm run dev:client
 ```
 
-### List Course Files
-```
-GET /api/files/course/:courseId?role=INSTRUCTOR
-GET /api/files/course/:courseId?role=STUDENT
-```
-Returns `{ raw: [...], grouped: { teacher: [...], students: [...] } }`
+---
 
-### Download (Signed URL)
-```
-GET /api/files/download/:fileId
-```
+## 🤝 Contributing
 
-### Save Student Query
-```
-POST /api/queries
-{ queryText, courseId, context, queryType, sessionId }
-```
+We welcome contributions from the community! To contribute to NeuroClass:
 
-### Export Queries for AI Training
-```
-GET /api/queries/export?courseId=...&limit=1000
-```
+1. **Fork** the repository.
+2. **Create** a new branch (`git checkout -b feature/amazing-feature`).
+3. **Commit** your changes (`git commit -m 'Add some amazing feature'`).
+4. **Push** to the branch (`git push origin feature/amazing-feature`).
+5. **Open** a Pull Request.
+
+---
+
+## 📄 License
+Distributed under the MIT License. See `LICENSE` for more information.
+
+Developed with ❤️ by **Darshan Kushalkar**.
