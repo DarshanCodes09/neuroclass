@@ -1,9 +1,22 @@
 # Root workspace gitignore
 node_modules/
 
-# Environment files (contain secret keys — never commit!)
+# Environment files
 .env
-*.local
+*.env.local
+server/.env
+client/.env
+
+# Local data & logs
+server/uploads/
+server/diagnostics/
+*.log
+
+# Build outputs
+dist/
+client/dist/
+server/dist/
+build/
 
 # OS files
 .DS_Store

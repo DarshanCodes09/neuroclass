@@ -14,6 +14,7 @@ import AITutor from './pages/AITutor';
 import AIEvaluatorTraining from './pages/AIEvaluatorTraining';
 import RoleRoute from './components/RoleRoute';
 import CourseHub from './pages/CourseHub';
+import Leaderboard from './pages/Leaderboard';
 
 function App() {
   return (
@@ -29,6 +30,7 @@ function App() {
           <Route path="evaluator-training" element={<AIEvaluatorTraining />} />
           <Route path="assignments" element={<InstructorAssignments />} />
           <Route path="grade-review" element={<GradeReview />} />
+          <Route path="leaderboard" element={<Leaderboard />} />
           <Route path="course/:courseId" element={<CourseHub />} />
         </Route>
       </Route>
@@ -42,6 +44,7 @@ function App() {
           <Route path="ai-tutor" element={<AITutor />} />
           <Route path="assignments" element={<StudentAssignments />} />
           <Route path="grades" element={<StudentGrades />} />
+          <Route path="leaderboard" element={<Leaderboard />} />
           <Route path="course/:courseId" element={<CourseHub />} />
         </Route>
       </Route>

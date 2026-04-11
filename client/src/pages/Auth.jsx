@@ -18,7 +18,9 @@ export default function Auth() {
 
   // Watch for authenticated state to redirect automatically
   useEffect(() => {
-    if (currentUser && userRole) {
+    // If we have a pending role resolution in localStorage, wait for context to catch up
+    const pendingRole = localStorage.getItem('neuroclass-preferred-role');
+    if (currentUser && userRole && !pendingRole) {
       navigate(`/${userRole.toLowerCase()}/dashboard`);
     }
   }, [currentUser, userRole, navigate]);

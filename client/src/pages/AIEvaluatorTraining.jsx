@@ -126,6 +126,42 @@ export default function AIEvaluatorTraining() {
     }
   };
 
+  const handleSaveTextSample = async (type) => {
+    if (!courseId || !currentUser) return;
+    const meta = sampleMeta[type];
+    if (!meta.marks) {
+      setErrorMessage(`Please provide marks for the ${type} example.`);
+      return;
+    }
+
+    try {
+      setUploadingCategory(`gold-${type}`);
+      setErrorMessage('');
+      setUploadProgress(20);
+      
+      const response = await aiService.uploadGoldSample({
+        courseId,
+        instructorId: currentUser.uid,
+        sampleType: type,
+        studentAnswer: meta.studentAnswer,
+        marks: meta.marks,
+        feedback: meta.feedback,
+        file: null, // No file for text-only submission
+      });
+
+      setGoldSamples((prev) => [...prev, response.sample]);
+      setStatusMessage(`Saved ${type} text sample.`);
+      await refreshProfile();
+      setUploadProgress(100);
+    } catch (error) {
+      console.error('Save failed', error);
+      setErrorMessage(error.message || 'Failed to save sample.');
+    } finally {
+      setUploadingCategory(null);
+      setUploadProgress(0);
+    }
+  };
+
   const handleStartTraining = async () => {
     if (!currentUser || !courseId) return;
     try {
@@ -182,7 +218,7 @@ export default function AIEvaluatorTraining() {
         
         {/* Rubrics & Guidelines Upload */}
         <section className="col-span-12 lg:col-span-6 flex flex-col gap-6">
-          <div className="bg-surface-container-lowest rounded-xl p-8 border border-outline-variant/10 h-full flex flex-col relative overflow-hidden">
+          <div className="bg-surface-container-lowest rounded-xl p-8 border border-outline-variant/10 h-full flex flex-col relative overflow-y-auto">
             <div className="absolute top-0 right-0 w-32 h-32 bg-secondary-fixed/20 rounded-bl-full blur-2xl -z-10"></div>
             <div className="mb-6">
               <span className="bg-secondary-fixed text-on-secondary-fixed-variant px-3 py-1 rounded-full text-[10px] font-bold tracking-widest uppercase mb-4 inline-block">Step 1</span>
@@ -238,7 +274,7 @@ export default function AIEvaluatorTraining() {
 
         {/* Gold Standard Examples */}
         <section className="col-span-12 lg:col-span-6 flex flex-col gap-6">
-          <div className="bg-surface-container-lowest rounded-xl p-8 border border-outline-variant/10 h-full flex flex-col relative overflow-hidden">
+          <div className="bg-surface-container-lowest rounded-xl p-8 border border-outline-variant/10 h-full flex flex-col relative overflow-y-auto">
              <div className="absolute top-0 right-0 w-32 h-32 bg-primary-fixed/20 rounded-bl-full blur-2xl -z-10"></div>
              <div className="mb-6">
               <span className="bg-primary-fixed text-on-primary-fixed-variant px-3 py-1 rounded-full text-[10px] font-bold tracking-widest uppercase mb-4 inline-block">Step 2</span>
@@ -246,67 +282,98 @@ export default function AIEvaluatorTraining() {
               <p className="text-sm text-on-surface-variant leading-relaxed">Provide previous student submissions along with the exact grade and feedback you gave. This calibrates the AI to your tone and strictness.</p>
             </div>
 
-            <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-4 auto-rows-auto">
                {['high', 'low', 'avg'].map(type => {
-                 // Check if we have a sample of this type
                  const sample = goldSamples.find(s => (s.type || s.sampleType) === type);
                  const isUploading = uploadingCategory === `gold-${type}`;
                  
                  const titleMap = {
                    'high': 'High-Scoring Example',
                    'low': 'Low-Scoring Example',
-                   'avg': 'Average Example'
+                   'avg': 'Average Example',
                  };
 
                  return (
-                   <div 
+                   <div
                      key={type}
-                     onClick={() => !sample && !isUploading && triggerUpload(`gold-${type}`)}
-                     className={`border rounded-xl p-5 h-32 flex flex-col justify-center items-center ${type === 'avg' ? 'sm:col-span-2' : ''} ${sample ? 'border-emerald-500/30 bg-emerald-50/10 cursor-default' : 'border-outline-variant/20 hover:bg-surface-container-low cursor-pointer group transition-colors'}`}
+                     className={`border rounded-xl p-5 flex flex-col gap-2 ${type === 'avg' ? 'sm:col-span-2' : ''} ${sample ? 'border-emerald-500/30 bg-emerald-50/10' : 'border-outline-variant/20 bg-surface-container-low/40'}`}
                    >
+                     {/* Card header */}
+                     <p className="text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-1">
+                       {isUploading ? 'Uploading…' : titleMap[type]}
+                     </p>
+
                      {isUploading ? (
-                        <>
-                          <Loader2 className="w-6 h-6 text-primary animate-spin mb-2" />
-                          <p className="text-xs font-bold text-center text-primary">{uploadProgress}%</p>
-                        </>
+                       <div className="flex items-center justify-center py-6">
+                         <Loader2 className="w-6 h-6 text-primary animate-spin" />
+                         <span className="ml-2 text-xs font-bold text-primary">{uploadProgress}%</span>
+                       </div>
                      ) : sample ? (
-                        <div className="relative w-full h-full flex flex-col justify-center items-center group">
-                          <button 
-                            onClick={(e) => { e.stopPropagation(); handleRemoveSample(sample.id); }}
-                            className="absolute top-2 right-2 p-1.5 rounded-full bg-red-100 text-red-600 opacity-0 group-hover:opacity-100 transition-opacity z-10 hover:bg-red-200 shadow-sm"
-                            title="Remove sample">
-                            <X className="w-3 h-3" />
-                          </button>
-                          <CheckCircle className="w-6 h-6 text-emerald-500 mb-2" />
-                          <p className="text-xs font-bold text-center text-emerald-700 truncate w-full px-2" title={sample.fileName || titleMap[type]}>
-                            {sample.fileName || `${titleMap[type]} saved`}
-                          </p>
-                        </div>
+                       <div className="flex items-center justify-between">
+                         <div className="flex items-center gap-2">
+                           <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
+                           <p className="text-xs font-bold text-emerald-700 truncate" title={sample.fileName || titleMap[type]}>
+                             {sample.fileName || `${titleMap[type]} saved`}
+                           </p>
+                         </div>
+                         <button
+                           onClick={(e) => { e.stopPropagation(); handleRemoveSample(sample.id); }}
+                           className="p-1.5 rounded-full bg-red-100 text-red-600 hover:bg-red-200 transition-colors shadow-sm"
+                           title="Remove sample"
+                         >
+                           <X className="w-3 h-3" />
+                         </button>
+                       </div>
                      ) : (
-                        <>
-                          <Upload className="w-6 h-6 text-on-surface-variant mb-2 group-hover:text-primary transition-colors" />
-                          <p className="text-xs font-bold text-center text-on-surface">Add {titleMap[type]}</p>
-                          <input
-                            value={sampleMeta[type].marks}
-                            onChange={(e) => setSampleMeta((prev) => ({ ...prev, [type]: { ...prev[type], marks: e.target.value } }))}
-                            placeholder="Marks"
-                            className="mt-2 px-2 py-1 rounded border border-outline-variant/20 text-xs w-full"
-                          />
-                          <textarea
-                            value={sampleMeta[type].studentAnswer}
-                            onChange={(e) => setSampleMeta((prev) => ({ ...prev, [type]: { ...prev[type], studentAnswer: e.target.value } }))}
-                            placeholder="Paste the student's answer or upload a file"
-                            className="mt-1 px-2 py-1 rounded border border-outline-variant/20 text-xs w-full"
-                            rows={3}
-                          />
-                          <textarea
-                            value={sampleMeta[type].feedback}
-                            onChange={(e) => setSampleMeta((prev) => ({ ...prev, [type]: { ...prev[type], feedback: e.target.value } }))}
-                            placeholder="Feedback"
-                            className="mt-1 px-2 py-1 rounded border border-outline-variant/20 text-xs w-full"
-                            rows={2}
-                          />
-                        </>
+                       <>
+                         {/* Marks input */}
+                         <input
+                           value={sampleMeta[type].marks}
+                           onChange={(e) => setSampleMeta((prev) => ({ ...prev, [type]: { ...prev[type], marks: e.target.value } }))}
+                           onClick={(e) => e.stopPropagation()}
+                           placeholder="Marks (Required)"
+                           type="number"
+                           className="px-3 py-2 rounded-lg border border-outline-variant/30 bg-surface-container-lowest text-sm w-full focus:outline-none focus:ring-2 focus:ring-primary/30"
+                         />
+                         {/* Student answer */}
+                         <textarea
+                           value={sampleMeta[type].studentAnswer}
+                           onChange={(e) => setSampleMeta((prev) => ({ ...prev, [type]: { ...prev[type], studentAnswer: e.target.value } }))}
+                           onClick={(e) => e.stopPropagation()}
+                           placeholder="Paste student's answer (Optional)…"
+                           rows={4}
+                           className="px-3 py-2 rounded-lg border border-outline-variant/30 bg-surface-container-lowest text-sm w-full resize-y focus:outline-none focus:ring-2 focus:ring-primary/30"
+                         />
+                         {/* Feedback */}
+                         <textarea
+                           value={sampleMeta[type].feedback}
+                           onChange={(e) => setSampleMeta((prev) => ({ ...prev, [type]: { ...prev[type], feedback: e.target.value } }))}
+                           onClick={(e) => e.stopPropagation()}
+                           placeholder="Your feedback (Optional)…"
+                           rows={2}
+                           className="px-3 py-2 rounded-lg border border-outline-variant/30 bg-surface-container-lowest text-sm w-full resize-y focus:outline-none focus:ring-2 focus:ring-primary/30"
+                         />
+                         
+                         {/* Action Buttons */}
+                         <div className="mt-3 flex items-center justify-between gap-2 border-t border-outline-variant/10 pt-3">
+                           <button
+                             type="button"
+                             onClick={(e) => { e.stopPropagation(); triggerUpload(`gold-${type}`); }}
+                             className="flex items-center gap-2 text-[11px] font-bold text-on-surface-variant hover:text-primary transition-colors"
+                           >
+                             <Upload className="w-3.5 h-3.5" /> Upload File
+                           </button>
+
+                           <button
+                             type="button"
+                             disabled={!sampleMeta[type].marks || !courseId || uploadingCategory === `gold-${type}`}
+                             onClick={(e) => { e.stopPropagation(); handleSaveTextSample(type); }}
+                             className="px-4 py-1.5 bg-primary text-on-primary rounded-lg text-[11px] font-black shadow-sm hover:shadow-primary/25 transition-all disabled:opacity-30 disabled:grayscale disabled:cursor-not-allowed"
+                           >
+                             Save Sample
+                           </button>
+                         </div>
+                       </>
                      )}
                    </div>
                  );
@@ -336,8 +403,8 @@ export default function AIEvaluatorTraining() {
             </div>
             <button 
               onClick={handleStartTraining}
-              disabled={isTraining || !courseId || ((profile.rubricCount || rubrics.length) === 0 && (profile.sampleCount || goldSamples.length) === 0)}
-              className="w-full sm:w-auto px-8 py-3 primary-gradient text-on-primary rounded-full font-semibold shadow-lg shadow-primary/25 hover:shadow-primary/40 transition-shadow disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+              disabled={isTraining || !courseId}
+              className="w-full sm:w-auto px-8 py-3 bg-primary text-on-primary rounded-full font-bold shadow-lg shadow-primary/25 hover:shadow-primary/40 transition-all active:scale-95 disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed flex items-center justify-center gap-2">
                {isTraining ? <><Loader2 className="w-5 h-5 animate-spin" /> Calibrating Engine...</> : 'Start Training Sequence'}
             </button>
           </div>

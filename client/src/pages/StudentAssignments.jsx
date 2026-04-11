@@ -11,6 +11,7 @@ export default function StudentAssignments({ courseIdFilter }) {
   
   const [selectedAssn, setSelectedAssn] = useState(null);
   const [uploadFile, setUploadFile] = useState(null);
+  const [textAnswer, setTextAnswer] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   
@@ -59,33 +60,55 @@ export default function StudentAssignments({ courseIdFilter }) {
   }, [currentUser]);
 
   const handleSubmit = async () => {
-    if (!uploadFile || !selectedAssn) return;
+    if (!selectedAssn) return;
+    if (!uploadFile && !textAnswer.trim()) {
+      setError('Please write your answer or upload a file before submitting.');
+      return;
+    }
     
     setLoading(true);
     setError('');
 
     try {
-      const uploadMeta = await aiService.uploadSubmissionFile(uploadFile);
-      const downloadURL = uploadMeta.fileUrl;
+      // Build submission text — prefer typed answer, fall back to file reference
+      let submissionText = textAnswer.trim();
+      let downloadURL = null;
+      let fileName = null;
 
-      // 2. Real AI Evaluation via Python Service Layer
+      if (uploadFile) {
+        const uploadMeta = await aiService.uploadSubmissionFile(uploadFile);
+        downloadURL = uploadMeta.fileUrl;
+        fileName = uploadMeta.fileName || uploadFile.name;
+        if (!submissionText) {
+          submissionText = `[File submission: ${fileName}]`;
+        }
+      }
+
+      // AI Evaluation
       let aiScore = 0;
-      let aiFeedback = "Evaluation failed connection.";
+      let aiFeedback = 'Evaluation failed connection.';
+      let aiMarks = {};
+      let plagiarismScore = 0;
+      let vectorJson = {};
+
       try {
         const evaluation = await aiService.evaluateSubmission({
-          textContent: `Submitted file: ${uploadMeta.fileName}. Download URL: ${downloadURL}`,
+          textContent: submissionText,
           courseId: selectedAssn.courseId,
           instructorId: selectedAssn.instructorId,
           studentId: currentUser.uid,
+          assignmentId: selectedAssn.id,
           assignmentPrompt: selectedAssn.description,
-          maxScore: selectedAssn.maxScore
+          maxScore: selectedAssn.maxScore,
         });
         aiScore = evaluation.score;
         aiFeedback = evaluation.feedback;
-      } catch {
-        // Keep moving forward gracefully so the student isn't blocked
-        console.warn("Python Evaluation Server unreachable. Defaulting to empty evaluation.");
-        aiFeedback = "ERROR: Auto-grading backend offline. Pending manual instructor review.";
+        aiMarks = evaluation.marks || {};
+        plagiarismScore = evaluation.plagiarismScore || 0;
+        vectorJson = evaluation.vector || {};
+      } catch (err) {
+        console.warn('AI evaluation error:', err.message);
+        aiFeedback = `ERROR: ${err.message || 'Auto-grading failed.'} (Pending manual instructor review)`;
       }
 
       await aiService.createSubmission({
@@ -95,14 +118,19 @@ export default function StudentAssignments({ courseIdFilter }) {
         studentId: currentUser.uid,
         studentName: currentUser.displayName || currentUser.email.split('@')[0],
         fileUrl: downloadURL,
-        fileName: uploadMeta.fileName || uploadFile.name,
+        fileName: fileName,
         status: 'evaluated',
         aiScore,
         aiFeedback,
+        studentAnswer: submissionText,
+        vectorJson,
+        plagiarismScore,
+        aiMarks,
         maxScore: selectedAssn.maxScore,
       });
 
       setUploadFile(null);
+      setTextAnswer('');
       setSelectedAssn(null);
       
     } catch (err) {
@@ -114,7 +142,7 @@ export default function StudentAssignments({ courseIdFilter }) {
   };
 
   return (
-    <div className={`px-4 md:px-12 py-6 md:py-10 max-w-screen-2xl mx-auto flex flex-col lg:flex-row gap-6 lg:gap-8 ${courseIdFilter ? 'h-[calc(100vh-250px)] pb-10' : 'h-auto lg:h-[calc(100vh-80px)] overflow-y-auto lg:overflow-hidden'}`}>
+    <div className={`px-4 md:px-12 py-6 md:py-10 max-w-screen-2xl mx-auto flex flex-col lg:flex-row gap-6 lg:gap-8 ${courseIdFilter ? 'h-[calc(100vh-250px)]' : 'min-h-0 lg:h-[calc(100vh-80px)]'}`}>
       
       {/* List Panel */}
       <div className="w-full lg:w-1/3 flex flex-col h-[50vh] lg:h-full overflow-y-auto pr-2 lg:pr-4 custom-scrollbar space-y-4 shrink-0">
@@ -164,7 +192,7 @@ export default function StudentAssignments({ courseIdFilter }) {
       </div>
 
       {/* Detail Panel */}
-      <div className="flex-1 min-h-[70vh] lg:min-h-0 bg-surface-container-lowest border border-outline-variant/20 rounded-2xl flex flex-col overflow-hidden shadow-inner relative">
+      <div className="flex-1 min-h-[70vh] lg:min-h-0 bg-surface-container-lowest border border-outline-variant/20 rounded-2xl flex flex-col overflow-y-auto shadow-inner relative">
         {!selectedAssn ? (
            <div className="flex flex-col items-center justify-center h-full opacity-50 relative z-10">
              <FileText className="w-16 h-16 mb-4 text-outline" />
@@ -185,56 +213,85 @@ export default function StudentAssignments({ courseIdFilter }) {
             </div>
 
             {/* Submission Area */}
-            <div className="flex-1 p-10 bg-surface-container-low/50 flex flex-col justify-center items-center">
-              
-              {error && <div className="mb-4 text-error font-medium text-sm flex items-center gap-2 bg-error/10 px-4 py-2 rounded-lg max-w-sm"><AlertCircle className="w-4 h-4" /> {error}</div>}
-              
-              <div 
-                className="w-full max-w-md border-2 border-dashed border-primary/30 bg-primary-fixed/5 rounded-2xl p-10 flex flex-col items-center justify-center text-center transition-colors hover:bg-primary-fixed/10"
+            <div className="flex-1 p-6 md:p-10 bg-surface-container-low/50 flex flex-col gap-6">
+
+              {error && <div className="text-error font-medium text-sm flex items-center gap-2 bg-error/10 px-4 py-3 rounded-lg"><AlertCircle className="w-4 h-4 shrink-0" /> {error}</div>}
+
+              {/* Text Answer */}
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-2">
+                  <Sparkles className="w-3.5 h-3.5 text-primary" /> Write Your Answer
+                </label>
+                <textarea
+                  value={textAnswer}
+                  onChange={(e) => setTextAnswer(e.target.value)}
+                  rows={7}
+                  placeholder="Type your answer here... You can explain concepts, write code, show your working, etc."
+                  className="w-full resize-none bg-surface-container-lowest border border-outline-variant/30 focus:border-primary/50 focus:ring-2 focus:ring-primary/20 rounded-xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/50 transition outline-none"
+                />
+              </div>
+
+              {/* Divider */}
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-px bg-outline-variant/20" />
+                <span className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">or attach a file</span>
+                <div className="flex-1 h-px bg-outline-variant/20" />
+              </div>
+
+              {/* File Upload */}
+              <div
+                className="border-2 border-dashed border-primary/30 bg-primary-fixed/5 rounded-2xl p-6 flex flex-col items-center justify-center text-center transition-colors hover:bg-primary-fixed/10 cursor-pointer"
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={(e) => {
                   e.preventDefault();
-                  if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-                    setUploadFile(e.dataTransfer.files[0]);
-                  }
+                  if (e.dataTransfer.files?.[0]) setUploadFile(e.dataTransfer.files[0]);
                 }}
+                onClick={() => !uploadFile && fileInputRef.current?.click()}
               >
+                <input
+                  type="file"
+                  className="hidden"
+                  ref={fileInputRef}
+                  onChange={(e) => setUploadFile(e.target.files[0])}
+                />
                 {!uploadFile ? (
                   <>
-                    <div className="w-16 h-16 rounded-full primary-gradient flex items-center justify-center text-white shadow-lg mb-6 shadow-primary/20">
-                      <UploadCloud className="w-8 h-8" />
+                    <div className="w-12 h-12 rounded-full primary-gradient flex items-center justify-center text-white shadow-lg mb-3 shadow-primary/20">
+                      <UploadCloud className="w-6 h-6" />
                     </div>
-                    <h3 className="font-bold font-headline text-lg mb-2">Upload Deliverable</h3>
-                    <p className="text-xs text-on-surface-variant mb-6">Drag and drop your PDF, DOCX, or ZIP file here, or browse.</p>
-                    <input 
-                      type="file" 
-                      className="hidden" 
-                      ref={fileInputRef} 
-                      onChange={(e) => setUploadFile(e.target.files[0])}
-                    />
-                    <button onClick={() => fileInputRef.current?.click()} className="px-6 py-2 bg-white dark:bg-slate-900 border border-outline-variant/30 rounded-full text-xs font-bold uppercase tracking-widest shadow-sm hover:border-primary/50 transition-colors">
-                      Browse Files
-                    </button>
+                    <p className="font-bold text-sm mb-1">Upload Deliverable</p>
+                    <p className="text-xs text-on-surface-variant">Drag & drop your PDF, DOCX, or ZIP, or <span className="text-primary font-bold">browse</span></p>
                   </>
                 ) : (
-                  <>
-                    <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 shadow-lg mb-6">
-                      <FileText className="w-8 h-8" />
+                  <div className="flex items-center justify-between w-full px-2" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600">
+                        <FileText className="w-5 h-5" />
+                      </div>
+                      <div className="text-left">
+                        <p className="font-bold text-sm line-clamp-1">{uploadFile.name}</p>
+                        <p className="text-xs text-on-surface-variant">{(uploadFile.size / 1024 / 1024).toFixed(2)} MB</p>
+                      </div>
                     </div>
-                    <h3 className="font-bold font-headline text-lg mb-2 line-clamp-1 break-all px-4">{uploadFile.name}</h3>
-                    <p className="text-xs text-on-surface-variant mb-6">{(uploadFile.size / 1024 / 1024).toFixed(2)} MB</p>
-                    <div className="flex gap-4">
-                      <button onClick={() => setUploadFile(null)} className="px-6 py-2 border border-error/30 text-error rounded-full text-[10px] font-bold uppercase tracking-widest hover:bg-error/10 transition-colors">Remove</button>
-                      <button 
-                        onClick={handleSubmit} 
-                        disabled={loading}
-                        className="px-6 py-2 primary-gradient text-white rounded-full text-[10px] font-bold uppercase tracking-widest shadow-lg shadow-primary/20 hover:shadow-xl hover:shadow-primary/30 transition-all active:scale-95 disabled:opacity-50 flex items-center gap-2">
-                        {loading ? 'Processing...' : <><Sparkles className="w-3 h-3"/> Submit to AI</>}
-                      </button>
-                    </div>
-                  </>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setUploadFile(null); }}
+                      className="px-3 py-1 border border-error/30 text-error rounded-full text-[10px] font-bold uppercase hover:bg-error/10 transition-colors"
+                    >
+                      Remove
+                    </button>
+                  </div>
                 )}
               </div>
+
+              {/* Submit Button */}
+              <button
+                onClick={handleSubmit}
+                disabled={loading || (!textAnswer.trim() && !uploadFile)}
+                className="w-full py-4 primary-gradient text-white rounded-2xl font-bold uppercase tracking-widest text-sm shadow-lg shadow-primary/20 hover:shadow-xl hover:shadow-primary/30 transition-all active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {loading ? 'Processing...' : <><Sparkles className="w-4 h-4" /> Submit &amp; Evaluate with AI</>}
+              </button>
+
             </div>
           </div>
         )}

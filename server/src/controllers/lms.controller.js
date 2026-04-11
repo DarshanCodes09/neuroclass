@@ -193,11 +193,17 @@ async function uploadSubmissionFile(req, res) {
 }
 
 async function createSubmission(req, res) {
-  const { assignmentId, courseId, instructorId, studentId, studentName, fileName, fileUrl, storagePath, aiScore = 0, aiFeedback = '', status = 'evaluated', maxScore = 100 } = req.body;
+  const { 
+    assignmentId, courseId, instructorId, studentId, studentName, fileName, fileUrl, storagePath, 
+    aiScore = 0, aiFeedback = '', status = 'evaluated', maxScore = 100,
+    studentAnswer = '', vectorJson = {}, plagiarismScore = 0, aiMarks = {}
+  } = req.body;
+
   if (!assignmentId || !courseId || !studentId)
     return res.status(400).json({ error: 'assignmentId, courseId, studentId required.' });
 
-  const { data, error } = await sb().from('submissions').insert({
+  // Core payload that always works
+  const basePayload = {
     assignment_id: assignmentId,
     course_id: courseId,
     instructor_id: instructorId,
@@ -208,10 +214,34 @@ async function createSubmission(req, res) {
     status,
     ai_score: Number(aiScore),
     ai_feedback: aiFeedback,
-    max_score: Number(maxScore),
-  }).select().single();
-  if (error) return res.status(500).json({ error: error.message });
-  return res.status(201).json({ submission: data });
+    max_score: Number(maxScore)
+  };
+
+  // Attempt to save with extended columns (Plagiarism/Breakdown)
+  try {
+    const { data, error } = await sb().from('submissions').insert({
+      ...basePayload,
+      student_answer: studentAnswer,
+      vector_json: vectorJson,
+      plagiarism_score: Number(plagiarismScore),
+      ai_marks: aiMarks
+    }).select().single();
+    
+    if (!error) return res.status(201).json({ submission: data });
+    
+    // If column missing error, fall back to base payload
+    if (error.code === '42703' || error.message?.includes('column')) {
+      console.warn('[lms] New columns missing in DB. Falling back to base submission schema.');
+      const { data: fallbackData, error: fallbackError } = await sb().from('submissions').insert(basePayload).select().single();
+      if (fallbackError) throw fallbackError;
+      return res.status(201).json({ submission: fallbackData });
+    }
+    
+    throw error;
+  } catch (err) {
+    console.error('[lms] createSubmission error:', err.message);
+    return res.status(500).json({ error: err.message });
+  }
 }
 
 async function listSubmissions(req, res) {
@@ -240,7 +270,9 @@ async function listSubmissions(req, res) {
     submittedAt: s.submitted_at,
     maxScore: s.max_score,
     finalScore: s.final_score,
-    instructorFeedback: s.instructor_feedback
+    instructorFeedback: s.instructor_feedback,
+    plagiarismScore: s.plagiarism_score,
+    aiMarks: s.ai_marks
   }));
   return res.json({ submissions: mappedSubmissions });
 }
@@ -265,7 +297,7 @@ async function listGrades(req, res) {
   const { studentId } = req.query;
   if (!studentId) return res.status(400).json({ error: 'studentId required.' });
   const { data, error } = await sb().from('submissions')
-    .select('*')
+    .select('*, assignments(title)')
     .eq('student_id', studentId)
     .in('status', ['approved', 'overridden'])
     .order('submitted_at', { ascending: false });
@@ -281,7 +313,7 @@ async function listGrades(req, res) {
     fileUrl: s.file_url,
     storagePath: s.storage_path,
     fileName: s.file_name,
-    status: s.status,
+    assignmentTitle: s.assignments?.title || s.file_name?.replace(/^[a-zA-Z0-9]+_/, '') || 'Submission',
     aiScore: s.ai_score,
     aiFeedback: s.ai_feedback,
     submittedAt: s.submitted_at,

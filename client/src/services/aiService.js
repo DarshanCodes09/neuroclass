@@ -11,7 +11,8 @@ function buildNetworkError(error) {
 async function parseResponse(response) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.error || `Request failed (${response.status})`);
+    const msg = data.reason ? `${data.error}: ${data.reason}` : (data.error || `Request failed (${response.status})`);
+    throw new Error(msg);
   }
   return data;
 }
@@ -209,6 +210,7 @@ export const aiService = {
         courseId: payload.courseId,
         instructorId: payload.instructorId,
         studentId: payload.studentId,
+        assignmentId: payload.assignmentId,
       }),
     });
   },

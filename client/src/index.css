@@ -68,8 +68,23 @@
     height: 100%;
     margin: 0;
     padding: 0;
-    overflow: hidden;
     overscroll-behavior: none;
+  }
+
+  /* Custom thin scrollbar — applied everywhere */
+  ::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(113, 42, 226, 0.25);
+    border-radius: 99px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(113, 42, 226, 0.5);
   }
 }
 

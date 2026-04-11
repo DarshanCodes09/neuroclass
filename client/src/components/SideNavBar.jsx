@@ -1,7 +1,7 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { BookOpen, LayoutDashboard, Brain, HelpCircle, LogOut, BrainCircuit, Users, ClipboardCheck, GraduationCap, X } from 'lucide-react';
+import { BookOpen, LayoutDashboard, Brain, HelpCircle, LogOut, BrainCircuit, Users, ClipboardCheck, GraduationCap, X, Star } from 'lucide-react';
 
 export default function SideNavBar({ isOpen, setIsOpen }) {
   const navigate = useNavigate();
@@ -87,16 +87,24 @@ export default function SideNavBar({ isOpen, setIsOpen }) {
                <GraduationCap className="w-5 h-5 shrink-0" />
                <span className="font-['Space_Grotesk'] text-sm uppercase tracking-wider truncate">Grades</span>
             </NavLink>
+            <NavLink onClick={() => setIsOpen(false)} to={`${basePath}/leaderboard`} className={({isActive}) => `px-4 py-3 rounded-full transition-all flex items-center gap-3 ${isActive ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 font-bold' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-200/50 dark:hover:bg-slate-800/50'}`}>
+               <Star className="w-5 h-5 shrink-0" />
+               <span className="font-['Space_Grotesk'] text-sm uppercase tracking-wider truncate">Leaderboard</span>
+            </NavLink>
           </>
         )}
 
       </nav>
       <div className="px-4 mt-auto">
         <div className="mt-6 border-t border-outline-variant/10 pt-4">
-          <a href="#" onClick={handleLogout} className="text-slate-600 dark:text-slate-300 px-4 py-3 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 rounded-full transition-all flex items-center gap-3 cursor-pointer">
+          <button 
+            type="button"
+            onClick={handleLogout} 
+            className="w-full text-slate-600 dark:text-slate-300 px-4 py-3 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 rounded-full transition-all flex items-center gap-3 cursor-pointer border-none bg-transparent"
+          >
             <LogOut className="w-5 h-5 shrink-0" />
             <span className="font-['Space_Grotesk'] text-sm font-semibold uppercase tracking-wider truncate">Logout</span>
-          </a>
+          </button>
         </div>
       </div>
     </aside>

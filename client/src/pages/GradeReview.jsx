@@ -63,7 +63,7 @@ export default function GradeReview() {
   };
 
   return (
-    <div className="px-4 md:px-12 py-6 md:py-10 max-w-screen-2xl mx-auto flex flex-col lg:flex-row h-auto lg:h-[calc(100vh-80px)] overflow-y-auto lg:overflow-hidden gap-6 lg:gap-8">
+    <div className="px-4 md:px-12 py-6 md:py-10 max-w-screen-2xl mx-auto flex flex-col lg:flex-row min-h-0 lg:h-[calc(100vh-80px)] gap-6 lg:gap-8">
       
       {/* List Panel */}
       <div className="w-full lg:w-1/3 flex flex-col h-[40vh] lg:h-full overflow-y-auto pr-2 lg:pr-4 custom-scrollbar space-y-4 shrink-0">
@@ -106,7 +106,7 @@ export default function GradeReview() {
       </div>
 
       {/* Detail Panel */}
-      <div className="flex-1 min-h-[70vh] lg:min-h-0 bg-surface-container-lowest border border-outline-variant/20 rounded-2xl flex flex-col overflow-hidden shadow-inner relative">
+      <div className="flex-1 min-h-[70vh] lg:min-h-0 bg-surface-container-lowest border border-outline-variant/20 rounded-2xl flex flex-col overflow-y-auto shadow-inner relative">
         {!selectedSub ? (
            <div className="flex flex-col items-center justify-center h-full opacity-50 relative z-10">
              <ClipboardCheck className="w-16 h-16 mb-4 text-outline" />
@@ -134,18 +134,43 @@ export default function GradeReview() {
                </div>
                <div className="text-right">
                   <p className="text-xs uppercase font-bold tracking-widest text-on-surface-variant mb-1">AI Recommendation</p>
-                  <p className="text-4xl font-headline font-black text-secondary">{selectedSub.aiScore}</p>
+                  <div className="flex items-center justify-end gap-3">
+                     {selectedSub.plagiarismScore !== undefined && (
+                       <div className={`px-2 py-1 rounded-full text-[10px] font-black uppercase tracking-tighter flex items-center gap-1 border ${
+                         selectedSub.plagiarismScore > 70 ? 'bg-error/10 text-error border-error/20' : 
+                         selectedSub.plagiarismScore > 30 ? 'bg-amber-100 text-amber-700 border-amber-200' : 
+                         'bg-emerald-100 text-emerald-700 border-emerald-200'
+                       }`}>
+                         <AlertCircle className="w-3 h-3" />
+                         Plagiarism: {selectedSub.plagiarismScore}%
+                       </div>
+                     )}
+                     <p className="text-4xl font-headline font-black text-secondary">{selectedSub.aiScore}</p>
+                  </div>
                </div>
             </div>
 
             {/* AI Context / Feedback */}
-            <div className="p-10 bg-secondary-fixed/10">
-               <h4 className="text-sm font-bold uppercase tracking-widest text-secondary-fixed-variant flex items-center gap-2 mb-4">
-                 <Sparkles className="w-4 h-4" /> Engine Justification
+            <div className="p-10 bg-surface-container-low/30">
+               <h4 className="text-xs font-black uppercase tracking-[0.2em] text-on-surface flex items-center gap-3 mb-6">
+                 <Sparkles className="w-5 h-5 text-primary" /> Engine Justification
                </h4>
-               <p className="text-on-surface font-medium leading-relaxed rounded-xl bg-surface-container-lowest/50 p-6 border border-secondary/10 shadow-inner">
+               
+               {/* Marks Breakdown Grid */}
+               {selectedSub.aiMarks && Object.keys(selectedSub.aiMarks).length > 0 && (
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+                   {Object.entries(selectedSub.aiMarks).map(([criterion, marks], i) => (
+                     <div key={i} className="flex justify-between items-center bg-surface-container-lowest p-4 rounded-2xl border border-outline-variant/10 shadow-sm transition-all hover:border-primary/20">
+                       <span className="text-[10px] font-black text-on-surface-variant uppercase tracking-widest">{criterion}</span>
+                       <span className="text-sm font-black text-primary font-headline">{marks}</span>
+                     </div>
+                   ))}
+                 </div>
+               )}
+
+               <div className="text-on-surface font-medium leading-relaxed rounded-[48px] bg-surface-container-lowest p-10 border border-outline-variant/5 shadow-xl shadow-primary/5 transition-all hover:shadow-2xl hover:shadow-primary/10">
                  {selectedSub.aiFeedback || "No detailed feedback generated."}
-               </p>
+               </div>
             </div>
 
             {/* Actions */}

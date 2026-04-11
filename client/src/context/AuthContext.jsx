@@ -15,20 +15,24 @@ export function AuthProvider({ children }) {
 
   async function fetchUserRole(uid) {
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('profiles')
         .select('role')
         .eq('id', uid)
         .single();
         
+      if (error) {
+        console.warn("Could not fetch user role (likely RLS):", error.message);
+        return null; // Return null to indicate 'unknown' rather than defaulting too early
+      }
+
       if (data) {
-        // Map database teacher to ui Instructor
-        return data.role === 'teacher' ? 'Instructor' : (data.role === 'admin' ? 'Admin' : 'Student');
+        return data.role === 'teacher' ? 'Instructor' : 'Student';
       }
     } catch (error) {
-      console.error("Error fetching user role:", error);
+      console.error("Error in fetchUserRole:", error);
     }
-    return 'Student'; // default role
+    return 'Student'; // final fallback
   }
 
   async function upsertUserRole(user, preferredRole) {
@@ -40,13 +44,18 @@ export function AuthProvider({ children }) {
       full_name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'User',
       role: dbRole,
     };
+
+    console.log(`Attempting to sync role: ${dbRole} for user ${user.id}`);
+    
     const { data, error } = await supabase
       .from('profiles')
       .upsert(payload, { onConflict: 'id' })
       .select('role')
       .single();
+
     if (error) {
-      console.error('Error upserting user role:', error);
+      console.error('Error upserting user role (PERMISSIONS REQUIRED):', error.message);
+      // If update fails, we still assume the user wants their preferred role for this session
       return fallbackRole;
     }
     return data?.role === 'teacher' ? 'Instructor' : 'Student';
@@ -54,10 +63,15 @@ export function AuthProvider({ children }) {
 
   async function resolveUserRole(user, preferredRole = null) {
     if (!user) return null;
+    
+    // If we have a preference (e.g. from the login screen), we TRY to set it
     if (preferredRole) {
       return upsertUserRole(user, preferredRole);
     }
-    return fetchUserRole(user.id);
+    
+    // Otherwise we fetch what's in the DB
+    const dbRole = await fetchUserRole(user.id);
+    return dbRole || 'Student';
   }
 
   async function signup(email, password, role = 'Student', name = '') {
@@ -132,9 +146,10 @@ export function AuthProvider({ children }) {
         user.uid = user.id;
 
         const preferredRole = localStorage.getItem('neuroclass-preferred-role');
-        if (preferredRole) localStorage.removeItem('neuroclass-preferred-role');
+        // DON'T remove yet, onAuthStateChange might also need it if session is half-baked
         resolveUserRole(user, preferredRole).then(role => {
           if (!isMounted) return;
+          if (preferredRole) localStorage.removeItem('neuroclass-preferred-role');
           setUserRole(role);
           setCurrentUser(user);
           setLoading(false);
@@ -161,13 +176,16 @@ export function AuthProvider({ children }) {
         user.uid = user.id;
 
         const preferredRole = localStorage.getItem('neuroclass-preferred-role');
-        if (preferredRole) localStorage.removeItem('neuroclass-preferred-role');
         const role = await resolveUserRole(user, preferredRole);
+        // ONLY remove once resolved
+        if (preferredRole) localStorage.removeItem('neuroclass-preferred-role');
+        
         setUserRole(role);
+        setCurrentUser(user);
       } else {
         setUserRole(null);
+        setCurrentUser(null);
       }
-      setCurrentUser(user);
       setLoading(false);
     });
 

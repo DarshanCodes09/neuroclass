@@ -1,7 +1,7 @@
 const { Client } = require('pg');
 
 // ⚠️ REPLACE THIS WITH YOUR ACTUAL PASSWORD 
-const DATABASE_PASSWORD = "YOUR_DATABASE_PASSWORD_HERE";
+const DATABASE_PASSWORD = "(Darshan512006)";
 
 // Do not change these unless your Supabase details change
 const connectionString = `postgres://postgres:${DATABASE_PASSWORD}@db.qpxujurhhknpqiwzkomx.supabase.co:5432/postgres`;
@@ -61,7 +61,7 @@ async function runSetup() {
   try {
     console.log("Connecting to Supabase...");
     await client.connect();
-    
+
     console.log("Running SQL commands...");
     await client.query(sql);
 

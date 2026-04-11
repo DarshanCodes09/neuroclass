@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Plus, Sparkles, CheckCircle, Paperclip, ArrowUp, FileText, Library } from 'lucide-react';
+import { Plus, Sparkles, CheckCircle, Paperclip, ArrowUp, FileText, Library, User, Brain } from 'lucide-react';
 import { aiService } from '../services/aiService';
 
 function getTutorStorageKey(userId) {
@@ -350,62 +350,37 @@ export default function AITutor({ courseIdFilter }) {
         </div>
       </section>
       
-      {/* Knowledge Context */}
+      {/* Inquiry History */}
       <aside className="w-72 bg-surface-container-lowest border-l border-outline-variant/10 p-6 hidden xl:block shrink-0 h-full overflow-y-auto">
-        <h2 className="font-headline text-sm font-black uppercase tracking-widest text-on-surface-variant mb-6">Course Context</h2>
+        <h2 className="font-headline text-sm font-black uppercase tracking-widest text-on-surface-variant mb-6">Inquiry History</h2>
         
-        {!activeCourse ? (
+        {messages.length === 0 ? (
            <div className="opacity-50 flex flex-col items-center justify-center h-48 text-center mt-12">
-             <Library className="w-8 h-8 mb-2" />
-             <p className="text-xs">Context will load once a course is selected.</p>
+             <Brain className="w-8 h-8 mb-2" />
+             <p className="text-xs">Once you start chatting, your inquiry history will appear here for quick reference.</p>
            </div>
         ) : (
-        <div className="space-y-6">
-          {/* Module Card */}
-          <div className="p-4 rounded-xl bg-surface-container-low border border-outline-variant/5">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-secondary mb-2">Active Module</p>
-            <h4 className="font-headline font-bold text-sm mb-2 leading-snug">{activeCourse.courseName}</h4>
-            <div className="w-full h-1.5 bg-surface-container-highest rounded-full overflow-hidden">
-              <div className="h-full w-2/3 bg-gradient-to-r from-primary to-secondary"></div>
-            </div>
-            <p className="text-[10px] text-on-surface-variant mt-2">64% Progress</p>
-            <p className="text-[10px] font-bold uppercase text-primary mt-4 tracking-widest">Pedagogy: {activeCourse.pedagogyStyle}</p>
-          </div>
-          
-          {/* Suggested Reading */}
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant mb-3">Course Materials</p>
-            {activeCourse.assets && activeCourse.assets.length > 0 ? (
-              <div className="space-y-4">
-                {activeCourse.assets.map((asset, idx) => (
-                  <div key={idx} className="flex gap-3 items-center">
-                    <div className="w-10 h-10 rounded bg-indigo-50 flex items-center justify-center flex-shrink-0">
-                      <FileText className="w-5 h-5 text-indigo-600" />
-                    </div>
-                    <div className="overflow-hidden">
-                      <p className="text-xs font-bold line-clamp-1 truncate" title={asset.fileName}>{asset.fileName}</p>
-                      <a href={asset.url} target="_blank" rel="noreferrer" className="text-[10px] text-primary hover:underline">View Asset</a>
-                    </div>
-                  </div>
-                ))}
+        <div className="space-y-4">
+          {messages.slice().reverse().map((msg, idx) => (
+            <div 
+              key={msg.id} 
+              className={`p-3 rounded-lg border transition-all cursor-pointer hover:shadow-md ${msg.role === 'ai' ? 'bg-indigo-50/30 border-indigo-100' : 'bg-surface-container-low border-transparent'}`}
+              onClick={() => {
+                const element = document.getElementById(`msg-${msg.id}`);
+                element?.scrollIntoView({ behavior: 'smooth' });
+              }}
+            >
+              <div className="flex items-center gap-2 mb-1">
+                {msg.role === 'ai' ? <Sparkles className="w-3 h-3 text-primary" /> : <User className="w-3 h-3 text-slate-500" />}
+                <span className="text-[9px] font-bold uppercase tracking-wider text-on-surface-variant">
+                  {msg.role === 'ai' ? 'Assistant' : 'You'}
+                </span>
               </div>
-            ) : (
-               <p className="text-xs italic text-on-surface-variant">No explicit assets were uploaded during initialization.</p>
-            )}
-          </div>
-          
-          {/* Graph Image Placeholder */}
-          <div className="mt-8">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant mb-3">Knowledge Map</p>
-            <div className="rounded-xl overflow-hidden aspect-square relative border border-outline-variant/10">
-              <div className="absolute inset-0 bg-gradient-to-tr from-primary/10 to-secondary/10"></div>
-              <img className="w-full h-full object-cover mix-blend-overlay" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBuC98XRBnWwWWDSvdBob66HN_n_XoScNk81h_zJEfQVnhZIfPBA37HRRcZNlFt3zWfaF-GtmUHtM7ufHdlQmCZDoKr7wA0sicG280PGW4XemthC_aQdonuWyZAoNuIJ00IarvNDA_IC_bAL_xJslOq1UUHOk7gnJWX85GSqjDdepJesgAr8G7Q2ZjnuTqj1i4tQSvSW56YhCbV0wXlPERavOx-PpAp-v-3p6TBBzd_ce_Ch48gsQQWod-cRDVGR1jQIhLF0wCSSx79" alt="Knowledge map"/>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <span className="bg-white/90 backdrop-blur px-3 py-1 rounded-full text-[10px] font-bold shadow-sm cursor-pointer hover:bg-white transition-colors">View Full Graph</span>
-              </div>
+              <p className="text-[11px] leading-snug line-clamp-2 text-on-surface font-medium italic">
+                "{msg.text}"
+              </p>
             </div>
-          </div>
-          
+          ))}
         </div>
         )}
       </aside>

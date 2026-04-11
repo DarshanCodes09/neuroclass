@@ -39,7 +39,7 @@ export default function StudentGrades() {
               {/* Header */}
               <div className="p-8 flex items-center justify-between border-b border-outline-variant/10">
                 <div>
-                  <h3 className="text-xl font-bold font-headline mb-1">{grade.fileName?.replace(/^[a-zA-Z0-9]+_/, '') || 'Submission'}</h3>
+                  <h3 className="text-xl font-bold font-headline mb-1">{grade.assignmentTitle}</h3>
                   <div className="flex gap-3 items-center text-xs font-bold text-on-surface-variant uppercase tracking-widest">
                     <span>Evaluated</span>
                     <span className="w-1 h-1 rounded-full bg-outline-variant/30"></span>
@@ -72,7 +72,7 @@ export default function StudentGrades() {
                   <h4 className="text-xs font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-2 mb-3">
                     <Sparkles className="w-4 h-4 text-secondary-fixed-variant" /> Primary Engine Feedback
                   </h4>
-                  <p className="text-sm font-medium leading-relaxed bg-white dark:bg-slate-950 p-6 rounded-xl border border-outline-variant/10 shadow-sm">
+                  <p className="text-sm font-medium leading-relaxed bg-slate-900 text-slate-100 p-6 rounded-xl border border-outline-variant/10 shadow-sm">
                     {grade.aiFeedback || "No automated feedback available."}
                   </p>
                 </div>
