@@ -1,9 +1,11 @@
-# 🧠 NeuroClass: AI-Powered Learning & Forensic Evaluation
+# 🎓 NeuroClass: Google Classroom Style AI-Powered Evaluation
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/DarshanCodes09/neuroclass)
 
-**NeuroClass** is a next-generation Learning Management System (LMS) designed to bridge the gap between student engagement and rigorous academic integrity. By integrating specialized AI personas and forensic evaluation logic, NeuroClass ensures that students are guided Socrates-style and graded with the precision of a trained professor.
+**NeuroClass** is an AI-enhanced Learning Management System (LMS) that brings the familiar, streamlined evaluation workflow of **Google Classroom** into the age of artificial intelligence. It allows instructors to create assignments and students to submit work, but replaces traditional manual grading with a high-speed, forensic AI evaluation engine.
+
+By combining the intuitive assignment management of Google Classroom with the analytical power of Groq's Llama-3 models, NeuroClass ensures students receive instant, high-quality feedback while instructors maintain complete control through custom rubrics and "gold standard" training samples.
 
 ## 🏗️ Architecture Overview
 
@@ -17,7 +19,16 @@
 
 ---
 
-## 🚀 Key Features
+## 📋 Google Classroom Style Workflow
+
+NeuroClass mimics the intuitive flow of Google Classroom to make it instantly familiar:
+1. **Assignment Creation**: Instructors post assignments, attach rubrics, and provide baseline "Gold Samples."
+2. **Student Submission**: Students submit answers via text, PDF, or DOCX, just like in a standard LMS.
+3. **AI Evaluation**: The AI instantly grades the work based on the instructor's rubric (replacing manual review).
+4. **Instant Results**: Students get their marks and feedback immediately in their dashboard.
+5. **Leaderboard Update**: Successful submissions are automatically ranked on the course leaderboard.
+
+---
 
 ### 1. ⚖️ 100% AI-Driven Forensic Evaluator
 Powered by **Groq (Llama 3.3 70B)**, our evaluation engine goes beyond simple grading.
